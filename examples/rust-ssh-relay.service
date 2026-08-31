@@ -1,0 +1,20 @@
+[Unit]
+Description=rust-ssh relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rustssh
+Group=rustssh
+EnvironmentFile=/etc/rust-ssh/relay.env
+ExecStart=/usr/local/bin/rust-ssh relay
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

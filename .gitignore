@@ -1,0 +1,15 @@
+/target/
+.cargo-home/
+*.log
+.env
+*.key
+*.crt
+*.pem
+*.pk8
+identity*.pub
+server-identity.pub
+token
+token.txt
+*.token
+.idea/
+.vscode/

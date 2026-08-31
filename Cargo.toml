@@ -1,0 +1,41 @@
+[package]
+name = "rust-ssh"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+description = "A small Noise-encrypted relay for SSH over isolated networks"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "=4.5.20", features = ["derive", "env"] }
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow"], optional = true }
+hex = "0.4"
+image = { version = "=0.25.6", default-features = false, features = ["png"], optional = true }
+idna = { version = "=1.0.3", optional = true }
+idna_adapter = { version = "=1.1.0", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+snow = "0.9"
+tokio = { version = "1.40", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+unicode-segmentation = { version = "=1.12.0", optional = true }
+url = { version = "=2.5.4", optional = true }
+webbrowser = { version = "=1.0.3", optional = true }
+# Keep the first release buildable with Rust 1.82; newer zeroize releases
+# currently require the Rust 2024 Cargo feature.
+zeroize = "=1.8.2"
+
+[features]
+default = []
+desktop = [
+    "dep:eframe",
+    "dep:image",
+    "dep:idna",
+    "dep:idna_adapter",
+    "dep:unicode-segmentation",
+    "dep:url",
+    "dep:webbrowser",
+]
