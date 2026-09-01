@@ -28,7 +28,7 @@ struct WireConfig {
 pub fn create_code(server: &str, public_key_path: &Path, token_path: &Path) -> Result<String> {
     let server_key = identity::load_public_key(public_key_path)?;
     let token = fs::read_to_string(token_path)
-        .with_context(|| format!("reading relay token {}", token_path.display()))?;
+        .with_context(|| format!("reading pairing token {}", token_path.display()))?;
     encode(Config {
         server: server.to_owned(),
         server_key,
@@ -79,11 +79,11 @@ fn validate_token(token: &str) -> Result<String> {
     let token = token.trim();
     if token.len() < MIN_TOKEN_BYTES {
         return Err(anyhow!(
-            "relay token 至少需要 {MIN_TOKEN_BYTES} 个非空白字节"
+            "配对 token 至少需要 {MIN_TOKEN_BYTES} 个非空白字节"
         ));
     }
     if token.len() > MAX_TOKEN_BYTES {
-        return Err(anyhow!("relay token 超过 {MAX_TOKEN_BYTES} 字节"));
+        return Err(anyhow!("配对 token 超过 {MAX_TOKEN_BYTES} 字节"));
     }
     Ok(token.to_owned())
 }

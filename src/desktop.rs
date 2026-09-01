@@ -156,7 +156,7 @@ impl eframe::App for ClientApp {
                 ui,
                 "配置码",
                 &mut self.settings.pairing_code,
-                "从服务器执行 pair-code 后复制整段内容",
+                "从服务器为这台设备的 token 生成 pair-code 后复制整段内容",
             );
             text_field(ui, "设备 ID", &mut self.settings.device_id);
             text_field(ui, "本地 SSH", &mut self.settings.target);
@@ -349,7 +349,7 @@ impl eframe::App for ConnectApp {
                 ui,
                 "配置码",
                 &mut self.settings.pairing_code,
-                "与 client 使用服务器生成的同一配置码",
+                "从服务器为 controller token 生成 pair-code 后复制整段内容",
             );
             text_field(ui, "SSH 用户", &mut self.settings.user);
             ui.add_space(8.0);

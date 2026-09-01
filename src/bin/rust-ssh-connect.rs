@@ -25,7 +25,7 @@ struct ProxyArgs {
     /// Legacy/manual pinned server public key file.
     #[arg(long)]
     server_key: Option<PathBuf>,
-    /// Legacy/manual relay token file.
+    /// Legacy/manual controller token file.
     #[arg(long)]
     token_file: Option<PathBuf>,
     #[arg(long)]

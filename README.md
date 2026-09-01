@@ -7,8 +7,8 @@
 | 端 | 程序 | 用户操作 |
 | --- | --- | --- |
 | Ubuntu VPS | `rust-ssh relay` | 管理员配置一次，长期运行 systemd 服务 |
-| Windows 被控机 | `rust-ssh-client.exe` | 粘贴服务器生成的配置码，点击“启动” |
-| Mac/Windows 主控机 | `rust-ssh-connect` | 粘贴同一配置码，选择在线设备，点击“连接” |
+| Windows 被控机 | `rust-ssh-client.exe` | 粘贴该设备专属配置码，点击“启动” |
+| Mac/Windows 主控机 | `rust-ssh-connect` | 粘贴 controller 配置码，选择在线设备，点击“连接” |
 
 client 和 connect 的 GUI 不需要填写 server key 路径、token 路径，也不需要手写 `ProxyCommand`。运行已编译的程序不需要安装 Rust、Cargo、Node.js 或源码。
 
@@ -29,7 +29,7 @@ Mac/Windows connect ─主动连接─────┘
 - 公网只需要开放 VPS 的一个 TCP 端口，默认 `24443`；
 - RustDesk 的 `hbbs/hbbr` 端口保持不变，不要复用。
 
-传输层使用 `Noise_XX_25519_ChaChaPoly_SHA256`。不使用 X.509 证书，也不需要域名。VPS 的 Noise 静态私钥只留在服务器；client/connect 只使用包含公钥和 token 的配置码。
+传输层使用 `Noise_XX_25519_ChaChaPoly_SHA256`。不使用 X.509 证书，也不需要域名。VPS 的 Noise 静态私钥只留在服务器；client/connect 分别使用包含公钥和各自 token 的配置码。
 
 ## 1. 下载程序
 
@@ -88,10 +88,12 @@ sudo /usr/local/bin/rust-ssh keygen \
 /etc/rust-ssh/identity.pub：Noise 公钥，会被写入配置码
 ```
 
-生成 token。已有 token 时不要再次执行：
+创建 controller token 和设备 token 目录。以下 `openssl` 命令只执行一次；如果对应文件已经存在，请跳过，否则旧配置码会失效：
 
 ```bash
-openssl rand -hex 32 | sudo tee /etc/rust-ssh/token >/dev/null
+sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh/devices
+openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null
+openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token >/dev/null
 ```
 
 设置权限：
@@ -99,10 +101,12 @@ openssl rand -hex 32 | sudo tee /etc/rust-ssh/token >/dev/null
 ```bash
 sudo chown root:rustssh /etc/rust-ssh/identity.key
 sudo chown root:rustssh /etc/rust-ssh/identity.pub
-sudo chown root:rustssh /etc/rust-ssh/token
+sudo chown root:rustssh /etc/rust-ssh/controller.token
+sudo chown root:rustssh /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
 sudo chmod 0640 /etc/rust-ssh/identity.key
 sudo chmod 0644 /etc/rust-ssh/identity.pub
-sudo chmod 0640 /etc/rust-ssh/token
+sudo chmod 0640 /etc/rust-ssh/controller.token
+sudo chmod 0640 /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
 ```
 
 创建 relay 环境配置：
@@ -111,7 +115,8 @@ sudo chmod 0640 /etc/rust-ssh/token
 sudo tee /etc/rust-ssh/relay.env >/dev/null <<'EOF'
 RUST_SSH_LISTEN=0.0.0.0:24443
 RUST_SSH_IDENTITY_KEY=/etc/rust-ssh/identity.key
-RUST_SSH_TOKEN_FILE=/etc/rust-ssh/token
+RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh/controller.token
+RUST_SSH_DEVICES_DIR=/etc/rust-ssh/devices
 EOF
 ```
 
@@ -135,18 +140,27 @@ sudo ss -lntp | grep ':24443'
 
 ### 生成配置码
 
-执行：
+为每台设备单独生成一段配置码。下面这段只发给对应的 Windows client：
 
 ```bash
 /usr/local/bin/rust-ssh pair-code \
   --server 203.0.113.10:24443 \
   --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/token
+  --token-file /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
 ```
 
-终端会输出一整行以 `rssh1:` 开头的内容。把这一整行通过安全方式复制给 Windows client 和 Mac/Windows connect。
+终端会输出一整行以 `rssh1:` 开头的内容。把它只复制给 `DESKTOP-KH8O1JM` 这台 client。
 
-配置码包含 relay IP、公钥和 token，应当视为秘密，不要公开贴到 GitHub、群聊或 issue。server 私钥 `identity.key` 永远不进入配置码。
+再为 Mac/Windows connect 单独生成 controller 配置码。这一段只发给主控端，绝不要复制到任何 client：
+
+```bash
+/usr/local/bin/rust-ssh pair-code \
+  --server 203.0.113.10:24443 \
+  --server-key /etc/rust-ssh/identity.pub \
+  --token-file /etc/rust-ssh/controller.token
+```
+
+配置码包含 relay IP、公钥和 token，应当视为秘密，不要公开贴到 GitHub、群聊或 issue。server 私钥 `identity.key` 永远不进入配置码。新增或删除设备时，只需新增或删除对应的 `<device_id>.token` 文件，然后重启 relay。
 
 ## 3. Windows：使用 client 被控端
 
@@ -166,7 +180,7 @@ rust-ssh-client-windows-x86_64.exe
 首次使用只填写：
 
 ```text
-配置码：粘贴 VPS 上 pair-code 输出的整行内容
+配置码：粘贴为这台设备生成的 pair-code 整行内容
 设备 ID：例如 DESKTOP-KH8O1JM
 本地 SSH：保持 127.0.0.1:22
 ```
@@ -221,7 +235,7 @@ rust-ssh-connect-windows-x86_64.exe
 打开后只填写：
 
 ```text
-配置码：与 client 使用同一段配置码
+配置码：粘贴 controller 配置码（不是某台 client 的设备配置码）
 SSH 用户：Windows OpenSSH 的用户名，例如 ame
 ```
 
@@ -268,7 +282,12 @@ Mac：~/.config/rust-ssh/connect.json
 | Windows client | 不监听公网端口 | 连接 VPS `IP:24443`，再连接本机 `127.0.0.1:22` |
 | Mac/Windows connect | 不监听公网端口 | 连接 VPS `IP:24443` |
 
-server key 用来确认服务器身份，token 用来授权，Noise 负责加密。公网端口仍可能被扫描，所以建议使用云安全组、防火墙和来源 IP 限制。当前版本已有握手超时、连接数限制、帧长度限制、设备 ID 校验和单设备单会话限制，但还没有 IP 限速、失败封禁和每设备独立 token。
+server key 用来确认服务器身份，token 用来授权，Noise 负责加密。当前 relay 不再有全局 agent token：
+
+- 每个 `<device_id>.token` 只授权该设备注册，泄露后不能 list，也不能连接或伪装成其他设备；
+- controller token 是主控密钥，只有它可以 list 和连接任意在线设备；它一旦泄露就等同于拥有整个 relay 的控制权限，绝不要分发给 agent；
+- Hello 的 wire 格式、Noise、帧格式和 bridge 均未改变；
+- 公网端口仍可能被扫描，所以建议使用云安全组和 VPS 防火墙。当前版本已有握手超时、连接数限制、帧长度限制、设备 ID 校验和单设备单会话限制，但不做 IP 限速、失败封禁、ACL、吊销或审计。
 
 ## 6. 高级 CLI 模式
 
@@ -284,7 +303,7 @@ cargo build --release --locked --bin rust-ssh
 rust-ssh list \
   --server 203.0.113.10:24443 \
   --server-key ~/.config/rust-ssh/server-identity.pub \
-  --token-file ~/.config/rust-ssh/token
+  --token-file ~/.config/rust-ssh/controller.token
 ```
 
 手动运行被控 agent：
@@ -293,12 +312,12 @@ rust-ssh list \
 rust-ssh.exe agent `
   --server 203.0.113.10:24443 `
   --server-key C:\ProgramData\rust-ssh\server-identity.pub `
-  --token-file C:\ProgramData\rust-ssh\token.txt `
+  --token-file C:\ProgramData\rust-ssh\DESKTOP-KH8O1JM.token `
   --device-id DESKTOP-KH8O1JM `
   --target 127.0.0.1:22
 ```
 
-高级模式才需要手动处理 key/token 文件。普通用户使用 GUI 配置码即可。
+高级模式中，agent 的 `--token-file` 必须是该 `--device-id` 对应的设备 token；`list` 和 `controller` 的 `--token-file` 必须是 controller token。普通用户使用 GUI 配置码即可。
 
 ## 7. 源码、Release 与运行时
 
