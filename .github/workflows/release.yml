@@ -18,26 +18,31 @@ jobs:
             name: relay-linux-x86_64
             target: x86_64-unknown-linux-gnu
             binary: rust-ssh
+            extension: ""
             features: ""
           - os: macos-14
             name: connect-macos-aarch64
             target: aarch64-apple-darwin
             binary: rust-ssh-connect
+            extension: ""
             features: --features desktop
           - os: windows-latest
             name: agent-windows-x86_64
             target: x86_64-pc-windows-msvc
-            binary: rust-ssh.exe
+            binary: rust-ssh
+            extension: .exe
             features: ""
           - os: windows-latest
             name: client-windows-x86_64
             target: x86_64-pc-windows-msvc
-            binary: rust-ssh-client.exe
+            binary: rust-ssh-client
+            extension: .exe
             features: --features desktop
           - os: windows-latest
             name: connect-windows-x86_64
             target: x86_64-pc-windows-msvc
-            binary: rust-ssh-connect.exe
+            binary: rust-ssh-connect
+            extension: .exe
             features: --features desktop
     runs-on: ${{ matrix.os }}
     steps:
@@ -51,7 +56,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/rust-ssh-${{ matrix.name }}${{ endsWith(matrix.binary, '.exe') && '.exe' || '' }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}${{ matrix.extension }}" "dist/rust-ssh-${{ matrix.name }}${{ matrix.extension }}"
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ssh-${{ matrix.name }}

@@ -67,14 +67,14 @@ pub fn generate(private_path: &Path, public_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn load_public_key(path: &Path) -> Result<[u8; STATIC_KEY_SIZE]> {
+pub fn load_public_key(path: &Path) -> Result<[u8; STATIC_KEY_SIZE]> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("reading pinned server public key {}", path.display()))?;
     decode_public_key(text.trim())
         .with_context(|| format!("loading pinned server public key {}", path.display()))
 }
 
-pub(crate) fn decode_public_key(value: &str) -> Result<[u8; STATIC_KEY_SIZE]> {
+pub fn decode_public_key(value: &str) -> Result<[u8; STATIC_KEY_SIZE]> {
     let bytes = hex::decode(value).context("decoding server public key as hex")?;
     bytes.try_into().map_err(|_| {
         anyhow!("server public key must be exactly {STATIC_KEY_SIZE} bytes encoded as hex")

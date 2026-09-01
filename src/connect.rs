@@ -3,12 +3,11 @@ use crate::noise;
 use crate::protocol::{read_frame, write_frame, DeviceInfo, Message, Role, PROTOCOL_VERSION};
 use crate::server;
 use anyhow::{anyhow, Result};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub server: String,
-    pub server_key: PathBuf,
+    pub server_key: [u8; crate::identity::STATIC_KEY_SIZE],
     pub token: String,
     pub target: String,
 }
@@ -16,7 +15,7 @@ pub struct Config {
 #[derive(Debug, Clone)]
 pub struct ListConfig {
     pub server: String,
-    pub server_key: PathBuf,
+    pub server_key: [u8; crate::identity::STATIC_KEY_SIZE],
     pub token: String,
 }
 

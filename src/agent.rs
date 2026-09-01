@@ -1,9 +1,9 @@
+use crate::bootstrap;
 use crate::bridge;
 use crate::noise;
 use crate::protocol::{read_frame, write_frame, Message, Role, PROTOCOL_VERSION};
 use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
@@ -12,10 +12,25 @@ use tracing::{info, warn};
 #[derive(Debug, Clone)]
 pub struct Config {
     pub server: String,
-    pub server_key: PathBuf,
+    pub server_key: [u8; crate::identity::STATIC_KEY_SIZE],
     pub token: String,
     pub device_id: String,
     pub target: String,
+}
+
+pub async fn run_with_bootstrap(
+    bootstrap: bootstrap::Config,
+    device_id: String,
+    target: String,
+) -> Result<()> {
+    run(Config {
+        server: bootstrap.server,
+        server_key: bootstrap.server_key,
+        token: bootstrap.token,
+        device_id,
+        target,
+    })
+    .await
 }
 
 pub async fn run(config: Config) -> Result<()> {

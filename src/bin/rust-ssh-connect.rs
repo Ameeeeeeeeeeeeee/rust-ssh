@@ -16,10 +16,16 @@ struct ProxyArgs {
     /// Internal stdin/stdout mode used by OpenSSH ProxyCommand.
     #[arg(long)]
     proxy: bool,
+    /// Pairing code file used by the GUI-generated SSH configuration.
+    #[arg(long)]
+    setup_code_file: Option<PathBuf>,
+    /// Legacy/manual relay endpoint.
     #[arg(long)]
     server: Option<String>,
+    /// Legacy/manual pinned server public key file.
     #[arg(long)]
     server_key: Option<PathBuf>,
+    /// Legacy/manual relay token file.
     #[arg(long)]
     token_file: Option<PathBuf>,
     #[arg(long)]
@@ -41,14 +47,23 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     if std::env::args().any(|argument| argument == "--proxy") {
         let args = ProxyArgs::parse();
-        let server = args.server.context("ProxyCommand 缺少 --server")?;
-        let server_key = args.server_key.context("ProxyCommand 缺少 --server-key")?;
-        let token_file = args.token_file.context("ProxyCommand 缺少 --token-file")?;
         let target = args.target.context("ProxyCommand 缺少 --target")?;
-        let token = std::fs::read_to_string(&token_file)
-            .with_context(|| format!("读取 token 文件 {}", token_file.display()))?
-            .trim()
-            .to_owned();
+        let (server, server_key, token) = if let Some(setup_code_file) = args.setup_code_file {
+            let code = std::fs::read_to_string(&setup_code_file)
+                .with_context(|| format!("读取配置码文件 {}", setup_code_file.display()))?;
+            let pairing = rust_ssh::bootstrap::decode(&code)?;
+            (pairing.server, pairing.server_key, pairing.token)
+        } else {
+            let server = args.server.context("ProxyCommand 缺少 --server")?;
+            let server_key_path = args.server_key.context("ProxyCommand 缺少 --server-key")?;
+            let server_key = rust_ssh::identity::load_public_key(&server_key_path)?;
+            let token_file = args.token_file.context("ProxyCommand 缺少 --token-file")?;
+            let token = std::fs::read_to_string(&token_file)
+                .with_context(|| format!("读取 token 文件 {}", token_file.display()))?
+                .trim()
+                .to_owned();
+            (server, server_key, token)
+        };
         let runtime = Runtime::new().context("创建 Tokio runtime")?;
         runtime.block_on(rust_ssh::connect::run(rust_ssh::connect::Config {
             server,

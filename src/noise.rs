@@ -2,7 +2,6 @@ use crate::identity::{self, ServerIdentity};
 use anyhow::{anyhow, Context, Result};
 use snow::{Builder, TransportState};
 use std::io;
-use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
@@ -17,8 +16,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub type RelayStream = NoiseStream<TcpStream>;
 
-pub async fn client_connect(endpoint: &str, public_key_path: &Path) -> Result<RelayStream> {
-    let expected_public_key = identity::load_public_key(public_key_path)?;
+pub async fn client_connect(endpoint: &str, expected_public_key: &[u8]) -> Result<RelayStream> {
     let stream = timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(endpoint))
         .await
         .map_err(|_| anyhow!("timed out connecting to relay {endpoint}"))?
@@ -29,7 +27,7 @@ pub async fn client_connect(endpoint: &str, public_key_path: &Path) -> Result<Re
 
     timeout(
         HANDSHAKE_TIMEOUT,
-        client_handshake(stream, &expected_public_key),
+        client_handshake(stream, expected_public_key),
     )
     .await
     .map_err(|_| anyhow!("timed out during Noise handshake with relay {endpoint}"))?
@@ -42,14 +40,14 @@ pub async fn client_handshake<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    if expected_public_key.len() != identity::STATIC_KEY_SIZE {
+    if expected_public_key.len() != crate::identity::STATIC_KEY_SIZE {
         return Err(anyhow!(
             "pinned server public key must be exactly {} bytes",
             identity::STATIC_KEY_SIZE
         ));
     }
 
-    let builder = Builder::new(identity::noise_params());
+    let builder = Builder::new(crate::identity::noise_params());
     let client_key = builder
         .generate_keypair()
         .map_err(|error| anyhow!("generating client Noise session key: {error}"))?;
@@ -93,7 +91,7 @@ pub async fn server_handshake<S>(mut stream: S, identity: &ServerIdentity) -> Re
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let builder = Builder::new(identity::noise_params());
+    let builder = Builder::new(crate::identity::noise_params());
     let mut handshake = builder
         .local_private_key(identity.private_key())
         .build_responder()

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod bootstrap;
 pub mod bridge;
 pub mod connect;
 pub mod identity;
