@@ -31,7 +31,7 @@ export SERVER_IP
 ```bash
 sudo curl -L --fail -o /usr/local/bin/rust-ssh-server https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-server-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh-server
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-server.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-server.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-server.service https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-server.service
 ```
 
 创建服务账户、目录和服务器身份：

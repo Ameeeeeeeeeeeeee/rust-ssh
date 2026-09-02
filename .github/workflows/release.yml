@@ -41,6 +41,9 @@ jobs:
         run: |
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}${{ matrix.extension }}" "dist/${{ matrix.asset }}${{ matrix.extension }}"
+          if [[ "${{ matrix.name }}" == "server-linux-x86_64" ]]; then
+            cp examples/rust-ssh-server.service dist/rust-ssh-server.service
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ssh-${{ matrix.name }}

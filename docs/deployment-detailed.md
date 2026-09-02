@@ -59,7 +59,7 @@ ssh relay-server
 ```bash
 sudo curl -L --fail -o /usr/local/bin/rust-ssh-server https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-server-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh-server
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-server.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-server.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-server.service https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-server.service
 ```
 
 如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
