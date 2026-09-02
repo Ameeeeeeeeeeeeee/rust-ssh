@@ -85,8 +85,8 @@ fn run() -> Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([650.0, 470.0])
-            .with_min_inner_size([580.0, 410.0])
+            .with_inner_size([650.0, 500.0])
+            .with_min_inner_size([580.0, 440.0])
             .with_icon(rust_ssh::desktop::app_icon()),
         ..Default::default()
     };

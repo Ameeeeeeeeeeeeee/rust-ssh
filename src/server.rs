@@ -61,6 +61,7 @@ struct State {
 struct Device {
     open_tx: mpsc::Sender<OpenRequest>,
     pending: Mutex<HashMap<String, oneshot::Sender<std::result::Result<RelayStream, String>>>>,
+    shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 struct OpenRequest {
@@ -368,44 +369,81 @@ fn valid_token_length(token: &str) -> bool {
     (MIN_TOKEN_BYTES..=MAX_TOKEN_BYTES).contains(&token.len())
 }
 
-async fn handle_agent(mut stream: RelayStream, state: State, device_id: String) -> Result<()> {
+async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> Result<()> {
     if !device_id::is_valid(&device_id) {
         return Err(anyhow!("invalid device id"));
     }
 
     let (open_tx, mut open_rx) = mpsc::channel(MAX_PENDING_SESSIONS_PER_DEVICE);
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
     let device = Arc::new(Device {
         open_tx,
         pending: Mutex::new(HashMap::new()),
+        shutdown_tx: Mutex::new(Some(shutdown_tx)),
     });
-    {
+    let previous = {
         let mut devices = state.devices.lock().await;
-        if devices.contains_key(&device_id) {
-            return Err(anyhow!("device already has an active client: {device_id}"));
-        }
-        devices.insert(device_id.clone(), device.clone());
+        devices.insert(device_id.clone(), device.clone())
+    };
+    if let Some(previous) = previous {
+        stop_device(&previous).await;
+        info!(device = %device_id, "replaced previous agent connection");
     }
     info!(device = %device_id, "agent registered");
 
-    while let Some(request) = open_rx.recv().await {
-        if let Err(error) = write_frame(
-            &mut stream,
-            &Message::Open {
-                session_id: request.session_id.clone(),
-            },
-        )
-        .await
-        {
-            fail_pending(&device, format!("device control connection ended: {error}")).await;
-            unregister(&state, &device_id, &device).await;
-            return Err(error);
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut control_reader = tokio::spawn(async move {
+        match read_frame(&mut reader).await {
+            Ok(message) => Err(anyhow!("unexpected agent control message: {message:?}")),
+            Err(error) => Err(error),
         }
-    }
+    });
 
+    let result = loop {
+        tokio::select! {
+            _ = &mut shutdown_rx => {
+                break Err(anyhow!("agent connection replaced by a newer client"));
+            }
+            request = open_rx.recv() => {
+                let Some(request) = request else {
+                    break Ok(());
+                };
+                let message = Message::Open {
+                    session_id: request.session_id.clone(),
+                };
+                let write_result = tokio::select! {
+                    _ = &mut shutdown_rx => Err(anyhow!("agent connection replaced by a newer client")),
+                    result = write_frame(&mut writer, &message) => result,
+                };
+                if let Err(error) = write_result {
+                    break Err(error);
+                }
+            }
+            control_result = &mut control_reader => {
+                break match control_result {
+                    Ok(result) => result,
+                    Err(error) => Err(anyhow!("agent control watcher failed: {error}")),
+                };
+            }
+        }
+    };
+
+    if !control_reader.is_finished() {
+        control_reader.abort();
+    }
+    let _ = control_reader.await;
     fail_pending(&device, "device control connection ended".to_owned()).await;
     unregister(&state, &device_id, &device).await;
-    info!(device = %device_id, "agent disconnected");
-    Ok(())
+    match result {
+        Ok(()) => {
+            info!(device = %device_id, "agent disconnected");
+            Ok(())
+        }
+        Err(error) => {
+            warn!(device = %device_id, %error, "agent disconnected");
+            Err(error)
+        }
+    }
 }
 
 async fn handle_agent_session(
@@ -626,6 +664,12 @@ async fn fail_pending(device: &Arc<Device>, reason: String) {
     }
 }
 
+async fn stop_device(device: &Arc<Device>) {
+    if let Some(shutdown_tx) = device.shutdown_tx.lock().await.take() {
+        let _ = shutdown_tx.send(());
+    }
+}
+
 async fn unregister(state: &State, device_id: &str, device: &Arc<Device>) {
     let mut devices = state.devices.lock().await;
     if let Some(current) = devices.get(device_id) {
@@ -790,9 +834,11 @@ mod tests {
     #[tokio::test]
     async fn device_can_hold_multiple_pending_sessions() {
         let (open_tx, _open_rx) = mpsc::channel(MAX_PENDING_SESSIONS_PER_DEVICE);
+        let (shutdown_tx, _shutdown_rx) = oneshot::channel();
         let device = Arc::new(Device {
             open_tx,
             pending: Mutex::new(HashMap::new()),
+            shutdown_tx: Mutex::new(Some(shutdown_tx)),
         });
         let (first_tx, _first_rx) = oneshot::channel();
         let (second_tx, _second_rx) = oneshot::channel();
@@ -801,6 +847,21 @@ mod tests {
         assert!(register_pending(&device, "session-b", second_tx).await);
         assert!(take_pending(&device, "session-a").await.is_some());
         assert!(take_pending(&device, "session-b").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn stopping_device_signals_the_previous_connection() {
+        let (open_tx, _open_rx) = mpsc::channel(MAX_PENDING_SESSIONS_PER_DEVICE);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let device = Arc::new(Device {
+            open_tx,
+            pending: Mutex::new(HashMap::new()),
+            shutdown_tx: Mutex::new(Some(shutdown_tx)),
+        });
+
+        stop_device(&device).await;
+        assert!(shutdown_rx.await.is_ok());
+        stop_device(&device).await;
     }
 
     #[test]
