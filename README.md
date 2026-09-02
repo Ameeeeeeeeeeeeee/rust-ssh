@@ -1,6 +1,6 @@
 # rust-ssh
 
-面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设备主动连接服务器 + 服务器中继”模式。Windows client 和 Mac/Windows connect 都只需要主动访问服务器，因此可以跨越不同 AP、AP 隔离和没有端口映射的网络。
+面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设备主动连接服务器 + 服务器中继”模式。Windows client 和 Mac/Windows connect 都只主动访问服务器，因此可以跨越不同 AP、AP 隔离和没有端口映射的网络。
 
 普通用户部署请直接阅读：
 
@@ -20,19 +20,19 @@ Mac/Windows connect ─主动连接─────┘
 - relay 可以同时管理多台 Windows client；
 - 不同设备可以并行连接；
 - 同一设备同时只允许一个 SSH 会话；
-- client 默认只允许连接本机 loopback SSH，避免成为内网代理；
+- client 只允许连接本机 loopback SSH，避免成为内网代理；
 - 公网只需要开放服务器的一个 TCP 端口，默认 `24443`；
 - client 和 connect 不监听公网端口；
-- RustDesk 的 `hbbs/hbbr` 端口保持不变，不要复用。
+- RustDesk 的 `hbbs/hbbr` 端口保持不变，不能与 rust-ssh 复用同一个端口。
 
-传输层使用 `Noise_XX_25519_ChaChaPoly_SHA256`。不使用 X.509 证书，也不需要域名。
+传输层使用 `Noise_XX_25519_ChaChaPoly_SHA256`。不使用 X.509 证书，也不需要域名；配置码中的 server key 用于确认连接的是正确的服务器。
 
 ## Authentication model
 
 relay 启动时读取：
 
 ```text
-/etc/rust-ssh/identity.key                         # Noise 私钥，只留 relay
+/etc/rust-ssh/identity.key                         # Noise 私钥，只留服务器
 /etc/rust-ssh/identity.pub                         # Noise 公钥
 /etc/rust-ssh/controller.token                     # controller 主控 token
 /etc/rust-ssh/devices/<device_id>.token            # 每台设备一个 token
@@ -40,24 +40,31 @@ relay 启动时读取：
 
 认证规则：
 
-- `Role::Agent` 先按 `device_id` 查找 `<device_id>.token`，再比较 token；
+- `Role::Agent` 先按 `device_id` 查找对应的 `<device_id>.token`，再比较 token；
 - `Role::Controller` 只比较 `controller.token`；
 - 不存在全局 agent token，也没有回退路径；
 - 单个 agent token 泄露只能注册或伪装对应设备，不能 list 或连接其他设备；
-- controller token 是 relay 的主控密钥，泄露后可 list 和连接所有设备，绝不能分发给 agent；
-- 设备 token 文件在 relay 启动时加载，新增、删除或修改后重启 relay 生效。
-- `device_id` 是可自定义的稳定设备名，不是硬件序列号；它必须与 relay 上对应的 `<device_id>.token` 文件名一致。
+- controller token 是服务器的主控密钥，泄露后可 list 和连接所有设备，绝不能分发给 client；
+- 设备 token 在 relay 启动时加载，新增、删除或修改后重启 relay 生效；
+- v0.4 起，client 首次启动时生成 `rssh-` 开头的随机设备 ID，并保存在本机配置中；它与 Windows 计算机名无关，也不会因修改计算机名而改变。
 
-Hello wire 格式、Noise、控制帧格式和 bridge 未改变。
+Hello wire 格式、Noise、控制帧格式和 bridge 未改变；设备配置码新增了可选的设备 ID 绑定字段，旧的 controller 配置码仍可解码。
 
 ## Pairing codes
 
-`pair-code` 的格式仍是 `rssh1:<base64url-json>`，内容包含 relay IP、Noise 公钥和一个 endpoint token。
+`pair-code` 的格式是 `rssh1:<base64url-json>`，内容包含服务器 IP、Noise 公钥和 endpoint token。设备配置码还包含设备 ID。
 
-每台 client 使用自己的设备 token 生成一段配置码；connect 使用 controller token 生成另一段配置码。配置码是秘密材料，不要提交到 GitHub、issue 或公共聊天中。
+v0.4 推荐流程是：
+
+1. Windows client UI 显示并允许复制本机随机设备 ID；
+2. 服务器执行 `rust-ssh device add`，为该 ID 生成 token 文件和设备配置码；
+3. 把设备配置码粘贴回对应 client；
+4. 服务器用 `controller.token` 生成另一份主控配置码，交给 connect。
+
+配置码是秘密材料，不要提交到 GitHub、issue 或公共聊天中。
 
 ```bash
-rust-ssh pair-code --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
+rust-ssh device add --device-id rssh-0123456789abcdef0123456789abcdef --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --devices-dir /etc/rust-ssh/devices
 ```
 
 ## Relay configuration
@@ -84,10 +91,16 @@ systemd 示例见 [`examples/rust-ssh-relay.service`](examples/rust-ssh-relay.se
 
 ## CLI surface
 
-生成 server identity：
+生成服务器 identity：
 
 ```bash
 rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
+```
+
+注册一个已在 client UI 中显示的设备：
+
+```bash
+rust-ssh device add --device-id rssh-0123456789abcdef0123456789abcdef --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --devices-dir /etc/rust-ssh/devices
 ```
 
 运行 relay：
@@ -96,10 +109,10 @@ rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust
 rust-ssh relay --listen 0.0.0.0:24443 --identity-key /etc/rust-ssh/identity.key --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
 ```
 
-运行 agent 时，`--token-file` 是该 `--device-id` 对应的设备 token：
+运行 agent 时，`--token-file` 是该 `--device-id` 对应的设备 token；GUI client 会自动从设备配置码读取它：
 
 ```powershell
-rust-ssh.exe agent --server 198.51.100.10:24443 --server-key C:\ProgramData\rust-ssh\server-identity.pub --token-file C:\ProgramData\rust-ssh\WIN-CLIENT-01.token --device-id WIN-CLIENT-01 --target 127.0.0.1:22
+rust-ssh.exe agent --server 198.51.100.10:24443 --server-key C:\ProgramData\rust-ssh\server-identity.pub --token-file C:\ProgramData\rust-ssh\device.token --device-id rssh-0123456789abcdef0123456789abcdef --target 127.0.0.1:22
 ```
 
 运行 `list` 或 `controller` 时，`--token-file` 是 controller token：
@@ -110,7 +123,7 @@ rust-ssh list --server 198.51.100.10:24443 --server-key ~/.config/rust-ssh/serve
 
 ## Build
 
-源码构建需要 Rust stable、Cargo 和 Git；运行 release 二进制不需要 Rust。
+源码构建需要 Rust stable、Cargo 和 Git；运行 Release 二进制不需要 Rust。
 
 ```bash
 cargo fmt --all -- --check
@@ -131,7 +144,7 @@ cargo build --release --locked --features desktop --bin rust-ssh-client
 cargo build --release --locked --features desktop --bin rust-ssh-connect
 ```
 
-`desktop` feature 隔离 egui 依赖；Ubuntu relay 默认使用无界面的 `rust-ssh` binary。
+`desktop` feature 隔离 egui 依赖；Ubuntu 服务器默认使用无界面的 `rust-ssh` binary。
 
 ## Release
 
@@ -149,6 +162,6 @@ rust-ssh-connect-macos-aarch64
 
 ## Security scope
 
-公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token 和单设备单会话限制。
+公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token、未知设备拒绝和单设备单会话限制。
 
 当前明确不包含：IP 限速、失败封禁、ACL、token 热吊销、审计、BitLocker 和证书体系。

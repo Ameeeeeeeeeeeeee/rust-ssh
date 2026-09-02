@@ -23,6 +23,11 @@ pub async fn run_with_bootstrap(
     device_id: String,
     target: String,
 ) -> Result<()> {
+    if let Some(pairing_device_id) = bootstrap.device_id.as_deref() {
+        if pairing_device_id != device_id {
+            return Err(anyhow!("device ID does not match the device pairing code"));
+        }
+    }
     run(Config {
         server: bootstrap.server,
         server_key: bootstrap.server_key,

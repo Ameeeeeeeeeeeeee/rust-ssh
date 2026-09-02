@@ -1,6 +1,7 @@
 use crate::agent;
 use crate::bootstrap;
 use crate::connect::{self, ListConfig};
+use crate::device_id;
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
 use serde::de::DeserializeOwned;
@@ -15,20 +16,24 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 
+const CLIENT_CONFIG_VERSION: u8 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct ClientSettings {
     pairing_code: String,
     device_id: String,
     target: String,
+    config_version: u8,
 }
 
 impl Default for ClientSettings {
     fn default() -> Self {
         Self {
             pairing_code: String::new(),
-            device_id: default_device_id(),
+            device_id: new_device_id(),
             target: "127.0.0.1:22".to_owned(),
+            config_version: CLIENT_CONFIG_VERSION,
         }
     }
 }
@@ -60,7 +65,7 @@ pub struct ClientApp {
 impl ClientApp {
     pub fn new(_creation_context: &eframe::CreationContext<'_>) -> Self {
         Self {
-            settings: load_settings("client.json"),
+            settings: load_client_settings(),
             status: "未运行".to_owned(),
             stop_tx: None,
             agent_thread: None,
@@ -156,10 +161,17 @@ impl eframe::App for ClientApp {
                 ui,
                 "配置码",
                 &mut self.settings.pairing_code,
-                "从服务器为这台设备的 token 生成 pair-code 后复制整段内容",
+                "从服务器 device add 命令输出的设备配置码复制整段内容",
             );
-            text_field(ui, "设备 ID", &mut self.settings.device_id);
-            ui.small("默认使用 Windows 计算机名；可以修改，但必须与服务器上的设备 token 文件名一致。");
+            ui.horizontal(|ui| {
+                ui.label("设备 ID");
+                ui.monospace(&self.settings.device_id);
+                if ui.button("复制").clicked() {
+                    ui.ctx().copy_text(self.settings.device_id.clone());
+                    self.status = "设备 ID 已复制".to_owned();
+                }
+            });
+            ui.small("首次启动时随机生成并保存；与 Windows 计算机名无关。需要更换身份时请重新注册新设备。");
             text_field(ui, "本地 SSH", &mut self.settings.target);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -408,8 +420,18 @@ impl eframe::App for ConnectApp {
 fn client_agent_config(settings: &ClientSettings) -> Result<agent::Config> {
     let pairing = bootstrap::decode(&settings.pairing_code)?;
     let device_id = required_value(&settings.device_id, "设备 ID")?;
-    if !valid_device_id(&device_id) {
-        return Err(anyhow!("设备 ID 只能包含字母、数字、.、_、-"));
+    if !device_id::is_generated(&device_id) {
+        return Err(anyhow!(
+            "设备 ID 不是有效的 rust-ssh 自动生成 ID，请重新注册 client"
+        ));
+    }
+    let pairing_device_id = pairing.device_id.ok_or_else(|| {
+        anyhow!("设备配置码没有绑定设备 ID，请使用服务器 device add 生成的配置码")
+    })?;
+    if pairing_device_id != device_id {
+        return Err(anyhow!(
+            "设备配置码属于其他设备，请在服务器使用当前设备 ID 重新生成"
+        ));
     }
     let target = required_value(&settings.target, "本地 SSH 目标")?;
     validate_loopback_target(&target)?;
@@ -421,14 +443,6 @@ fn client_agent_config(settings: &ClientSettings) -> Result<agent::Config> {
         device_id,
         target,
     })
-}
-
-fn valid_device_id(device_id: &str) -> bool {
-    !device_id.is_empty()
-        && device_id.len() <= 128
-        && device_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn validate_loopback_target(target: &str) -> Result<()> {
@@ -479,6 +493,25 @@ where
         .unwrap_or_default()
 }
 
+fn load_client_settings() -> ClientSettings {
+    let mut settings: ClientSettings = load_settings("client.json");
+    let mut changed = false;
+    if settings.config_version != CLIENT_CONFIG_VERSION {
+        settings.device_id = new_device_id();
+        settings.pairing_code.clear();
+        settings.config_version = CLIENT_CONFIG_VERSION;
+        changed = true;
+    }
+    if settings.device_id.trim().is_empty() {
+        settings.device_id = new_device_id();
+        changed = true;
+    }
+    if changed {
+        let _ = save_settings("client.json", &settings);
+    }
+    settings
+}
+
 fn save_settings<T>(name: &str, settings: &T) -> Result<()>
 where
     T: Serialize,
@@ -503,10 +536,11 @@ fn config_dir() -> PathBuf {
     PathBuf::from(".").join("rust-ssh")
 }
 
-fn default_device_id() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "windows-agent".to_owned())
+fn new_device_id() -> String {
+    device_id::generate().unwrap_or_else(|error| {
+        tracing::error!(%error, "could not generate device ID");
+        "rssh-device-uninitialized".to_owned()
+    })
 }
 
 fn default_user() -> String {
@@ -519,7 +553,7 @@ const MANAGED_SSH_BEGIN: &str = "# >>> rust-ssh managed begin >>>";
 const MANAGED_SSH_END: &str = "# <<< rust-ssh managed end <<<";
 
 fn install_ssh_host(settings: &ConnectSettings, device_id: &str) -> Result<String> {
-    if !valid_device_id(device_id) {
+    if !device_id::is_valid(device_id) {
         return Err(anyhow!("设备 ID 包含不支持的字符"));
     }
     save_settings("connect.json", settings)?;

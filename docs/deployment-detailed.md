@@ -1,135 +1,126 @@
 # rust-ssh 三端部署：详细版
 
-这份手册把三端的完整流程放在一起：
+这份手册把服务器、Windows 被控端和 Mac/Windows 主控端放在一个流程里。请按顺序操作。
+
+## 0. 先理解三端和网络
 
 | 端 | 系统 | 程序 | 作用 |
 | --- | --- | --- | --- |
-| 服务器端 | Ubuntu 服务器 | `rust-ssh relay` | 保存身份密钥和 token，负责中继 |
+| 服务器 | Ubuntu | `rust-ssh relay` | 保存密钥和 token，负责中继 |
 | 被控端 | Windows x86-64 | `rust-ssh-client` | 主动连接服务器，并把 SSH 转给本机 |
-| 主控端 | macOS ARM64 或 Windows x86-64 | `rust-ssh-connect` | 查看在线设备，并通过 SSH 连接 |
+| 主控端 | macOS ARM64 或 Windows x86-64 | `rust-ssh-connect` | 查看在线设备，并发起 SSH |
 
-最终网络关系是：
+网络方向只有两条主动连接：
 
 ```text
-Windows client ──主动连接──> Ubuntu 服务器:24443 <──主动连接── Mac/Windows connect
-       │                                           │
-       └──本机 127.0.0.1:22                       └──SSH / VS Code
+Windows client ──主动 TCP/Noise──> Ubuntu 服务器:24443 <──主动 TCP/Noise── Mac/Windows connect
+       │                                                               │
+       └──本机 127.0.0.1:22                                           └──本机 SSH / VS Code
 ```
 
-两台电脑即使处于不同 AP、开启 AP 隔离或没有公网端口，也能通过服务器互通。运行 Release 中的程序不需要安装 Rust；Rust 只用于源码编译。
+因此，AP 隔离只要不阻止电脑访问服务器，就不会阻止这套连接。服务器只需要向公网暴露一个 TCP 端口；client 和 connect 都不需要端口映射，也不监听公网端口。
 
-## 1. 准备信息
+本手册中的 `198.51.100.10`、`relay-server`、`windows-user` 和 `rssh-0123456789abcdef0123456789abcdef` 都是匿名示例，不是固定值。
 
-需要准备：
+运行 GitHub Release 中的二进制不需要 Rust。只有从源码编译时才需要 Rust 和 Cargo。
 
-- Ubuntu 服务器的公网 IP，例如 `198.51.100.10`；
-- 能登录服务器的 SSH 方式，例如 `ssh relay-server`；
-- Windows 被控机的设备 ID，例如 `WIN-CLIENT-01`；
-- Windows 上实际登录 OpenSSH 的用户名，例如 `windows-user`。
+## 1. 准备服务器信息
 
-设备 ID 只能包含字母、数字、`.`、`_`、`-`，并且每台设备必须唯一。这里的示例值都是虚构的。
+你需要知道：
 
-`relay-server` 只是本机 SSH 配置里的示例登录别名，不能放进 rust-ssh 配置码；配置码必须使用服务器公网 IP 和 `24443` 端口。
+- 服务器公网 IP，例如 `198.51.100.10`；
+- 登录服务器的方式，例如 `ssh relay-server`；
+- 云平台安全组和 Ubuntu 防火墙的管理权限；
+- Windows 上 OpenSSH 的登录用户名，例如 `windows-user`。
 
-### 1.1 获取或自定义设备 ID
+服务器使用 IP，不使用域名。配置码中的格式必须是 `服务器公网IP:端口`，默认端口为 `24443`。
 
-在 Windows 被控机打开 PowerShell，执行：
+在服务器登录终端中设置一个变量：
 
-```powershell
-$env:COMPUTERNAME
+```bash
+SERVER_IP=198.51.100.10
+export SERVER_IP
 ```
 
-输出的计算机名就是 rust-ssh client 默认填入的设备 ID。它不是硬件序列号，也不是服务器自动分配的值。你可以直接在 client GUI 的“设备 ID”输入框中改成自己的名称，例如 `WIN-CLIENT-01`、`OFFICE-PC`。
+这个变量只在当前终端有效。重新登录后需要再次执行；后面命令请继续在同一个终端执行。
 
-自定义时只需满足三条：
+## 2. Ubuntu 服务器部署 relay
 
-- 每台 Windows 设备使用不同的 ID；
-- 只使用字母、数字、`.`、`_`、`-`；
-- 服务器上的 token 文件名必须是 `/etc/rust-ssh/devices/<设备ID>.token`。
+### 2.1 下载 relay
 
-如果 client 已经保存过配置，改 Windows 计算机名不会自动改掉 rust-ssh 里的旧 ID；请在 GUI 里手动修改，并按第 3.3 节重新生成配置码。
-
-## 2. Ubuntu 服务器：安装并运行 relay
-
-### 2.1 下载程序和 systemd 服务
-
-在本机登录服务器：
+登录服务器：
 
 ```bash
 ssh relay-server
 ```
 
-下面命令在服务器终端执行。请把这四行直接复制执行，只修改前两行的值：
+下载 v0.4.0 的 Linux relay 和 systemd 服务文件：
 
 ```bash
-SERVER_IP=198.51.100.10
-DEVICE_ID=WIN-CLIENT-01
-export SERVER_IP DEVICE_ID
-printf '服务器=%s:24443\n设备ID=%s\n' "$SERVER_IP" "$DEVICE_ID"
-```
-
-这些变量只在当前 SSH 终端里有效；重新登录服务器后，需要再次执行。后面的命令请在同一个终端继续执行。
-
-下载 v0.3.0 的 Linux relay 和服务文件：
-
-```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.3.0/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.0/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.3.0/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.0/examples/rust-ssh-relay.service
 ```
 
-如果服务器不能直接访问 GitHub，也可以在本机下载后，用 `scp` 上传到服务器当前目录，再执行：
+如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
 
 ```bash
 sudo install -m 0755 rust-ssh-relay-linux-x86_64 /usr/local/bin/rust-ssh
 sudo install -m 0644 rust-ssh-relay.service /etc/systemd/system/rust-ssh-relay.service
 ```
 
-### 2.2 创建 relay 账户和身份密钥
+### 2.2 创建服务账户和目录
+
+systemd 会让 relay 以低权限用户 `rustssh` 运行。下面命令可以重复执行：
 
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin rustssh 2>/dev/null || true
-sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh /etc/rust-ssh/devices
+sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh
+sudo install -d -o root -g rustssh -m 2750 /etc/rust-ssh/devices
 ```
 
-第一次部署时生成身份密钥：
+`devices` 目录使用 `2750`，其中的 setgid 位会让新生成的设备 token 继承 `rustssh` 组，保证 relay 能读取它们。
+
+### 2.3 生成服务器 identity
+
+第一次部署时执行：
 
 ```bash
 sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
 ```
 
-这两个文件的含义：
+文件用途如下：
 
-| 文件 | 用途 | 是否能给别人 |
+| 文件 | 用途 | 能否分发 |
 | --- | --- | --- |
-| `/etc/rust-ssh/identity.key` | relay 的 Noise 私钥 | 不能，永远只留在服务器 |
-| `/etc/rust-ssh/identity.pub` | 写入配置码，用来确认 relay 身份 | 可以通过配置码间接使用 |
+| `/etc/rust-ssh/identity.key` | Noise 私钥，用于证明服务器身份 | 不能，只留服务器 |
+| `/etc/rust-ssh/identity.pub` | 公钥，写入配置码让端点锁定服务器 | 可以随配置流程使用 |
 
-升级 relay 或重启服务器时保留这两个文件，不要再次运行 `keygen`。如果重新生成，旧配置码中的 server key 会不匹配。
+`identity.key` 是长期身份。升级程序、重启服务、重启服务器都保留它；不要再次执行 `keygen`，否则旧配置码中的 server key 会失效。
 
-### 2.3 创建 controller token 和设备 token
+### 2.4 生成 controller token
 
-v0.3.0 有两种 token：
-
-- `/etc/rust-ssh/controller.token`：只有一份，给所有可信的 connect 主控端使用；它可以查看和连接所有设备；
-- `/etc/rust-ssh/devices/<DEVICE_ID>.token`：每台设备一份，只能让对应的 device ID 注册。
-
-只在文件不存在时生成，避免让已经发出的配置码失效：
+controller token 是主控总钥匙，服务器只生成一份：
 
 ```bash
 sudo test -e /etc/rust-ssh/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null)
-sudo test -e /etc/rust-ssh/devices/$DEVICE_ID.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/$DEVICE_ID.token >/dev/null)
 ```
 
-设置 relay 服务读取这些文件所需的权限：
+所有可信的 connect 可以使用同一个 controller 配置码。v0.4 暂不提供每个主控端独立权限；因此 controller token 或其配置码泄露，就等于所有设备的主控权限泄露。
+
+给 relay 设置读取权限：
 
 ```bash
-sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
-sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub /etc/rust-ssh/controller.token /etc/rust-ssh/devices
+sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token
 sudo chmod 0644 /etc/rust-ssh/identity.pub
 ```
 
-### 2.4 写 relay 配置并启动服务
+此时还不要手动创建设备 token。v0.4 的正确顺序是先打开 client 取得它的随机设备 ID，再使用 `device add` 注册。
+
+### 2.5 写入 relay 配置并启动
+
+创建环境文件：
 
 ```bash
 sudo tee /etc/rust-ssh/relay.env >/dev/null <<'EOF'
@@ -138,12 +129,18 @@ RUST_SSH_IDENTITY_KEY=/etc/rust-ssh/identity.key
 RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh/controller.token
 RUST_SSH_DEVICES_DIR=/etc/rust-ssh/devices
 EOF
+```
 
+这个 heredoc 配置块本身需要换行；除此之外，手册中的命令都可以一行执行。
+
+安装并启动持久化服务：
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now rust-ssh-relay
 ```
 
-检查状态和日志：
+检查服务：
 
 ```bash
 sudo systemctl status rust-ssh-relay --no-pager
@@ -151,37 +148,49 @@ sudo ss -lntp | grep ':24443'
 sudo journalctl -u rust-ssh-relay -n 50 --no-pager
 ```
 
-云安全组和服务器防火墙只需要放行：
+如果服务因为“没有 device token 目录”启动失败，确认 `/etc/rust-ssh/devices` 存在且权限为 `root:rustssh`，然后执行 `sudo systemctl restart rust-ssh-relay`。
+
+### 2.6 配置云安全组和 Ubuntu 防火墙
+
+只放行服务器的 `TCP 24443`：
+
+```bash
+sudo ufw allow 24443/tcp
+```
+
+如果你使用云安全组，也要添加一条入方向 TCP `24443` 规则。不要开放 Windows 的 `22` 端口；Windows 的 `22` 只允许 client 在本机访问。
+
+如果 `24443` 已经被别的程序占用，rust-ssh 不能复用它。换成另一个端口后，需要同时修改 `RUST_SSH_LISTEN` 和所有配置码中的服务器地址；RustDesk 使用的端口也不要重复占用。
+
+## 3. Windows 被控端部署 client
+
+### 3.1 下载并首次打开
+
+从 [v0.4.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.0) 下载：
 
 ```text
-TCP 24443
+rust-ssh-client-windows-x86_64.exe
 ```
 
-不要放行 Windows 的 `22` 端口。`24443` 是 rust-ssh 的端口，不能和已有 RustDesk 服务端口复用；如果确实要换端口，必须同时改 `RUST_SSH_LISTEN`，并重新生成两类配置码。
+第一次打开时，client GUI 会显示类似下面的设备 ID：
 
-### 2.5 生成两种配置码
-
-设备配置码给 Windows client：
-
-```bash
-sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
+```text
+rssh-0123456789abcdef0123456789abcdef
 ```
 
-主控配置码给 Mac/Windows connect：
+点击“复制”，把这串 ID 交给服务器管理员。这个 ID：
 
-```bash
-sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
-```
+- 由 client 首次运行时随机生成；
+- 保存在 `%APPDATA%\rust-ssh\client.json`；
+- 不使用 Windows 的 `COMPUTERNAME` 或主机名；
+- 不会因修改 Windows 主机名而变化；
+- 不是秘密，单独知道它不能通过认证。
 
-两个命令都会输出一整行 `rssh1:...`：
+随机 ID 有 128 位随机空间，正常情况下不会重复。服务器的 `device add` 还会拒绝同一个 ID 的重复注册；relay 也会拒绝同一个 ID 同时运行两个 client。
 
-- 设备配置码只能给对应的 Windows client；
-- 主控配置码只能给可信的 connect；
-- 配置码包含 token，不要发到 GitHub、issue、公共群聊或截图中。
+当前设计不让用户在 UI 中直接编辑 ID，因为随意改 ID 会造成“本机 ID、服务器 token 和配置码”三者不一致。需要更换身份时，按第 7.2 节操作。
 
-## 3. Windows：配置被控端 client
-
-### 3.1 确认 Windows OpenSSH Server
+### 3.2 确认 Windows OpenSSH Server
 
 在 Windows 管理员 PowerShell 中执行：
 
@@ -190,7 +199,7 @@ Get-Service sshd
 Test-NetConnection 127.0.0.1 -Port 22
 ```
 
-如果找不到 `sshd`，安装并启动：
+如果没有 `sshd`，安装并启动：
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
@@ -198,168 +207,255 @@ Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
 ```
 
-这里设置自动启动的是 Windows 自带的 `sshd`，不是 rust-ssh client。按当前设计，client 不会自动开机启动。
+这里设置自动启动的是 Windows 自带的 OpenSSH Server，不是 rust-ssh client。按当前设计，client 不自动开机启动；需要使用时手动打开即可。
 
-### 3.2 下载并配置 client
+### 3.3 在服务器登记设备
 
-从 [v0.3.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.3.0) 下载：
+把 client UI 显示的完整 ID 填入服务器终端变量。示例：
 
-```text
-rust-ssh-client-windows-x86_64.exe
+```bash
+DEVICE_ID=rssh-0123456789abcdef0123456789abcdef
 ```
 
-打开程序，填写：
+执行注册命令：
 
-| GUI 字段 | 填写内容 |
+```bash
+sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --devices-dir /etc/rust-ssh/devices
+```
+
+这个命令会：
+
+1. 检查 ID 是否是 v0.4 client 生成的格式；
+2. 在服务器写入 `/etc/rust-ssh/devices/<设备ID>.token`；
+3. 生成只属于这台设备的 token；
+4. 输出绑定了该设备 ID 的 `rssh1:...` 配置码。
+
+如果提示 `device is already registered`，说明服务器已经有同名设备。不要随便删除旧 token；先确认是不是同一台设备。如果确实要重新注册，见第 7.2 节。
+
+复制命令输出的整行 `rssh1:...` 配置码，暂时不要发到公共聊天或提交 GitHub。它包含设备 token，只交给对应的 Windows client。
+
+让 relay 读取新 token：
+
+```bash
+sudo systemctl restart rust-ssh-relay
+```
+
+### 3.4 在 client 中完成配置
+
+回到 Windows client GUI：
+
+| 字段 | 填写内容 |
 | --- | --- |
-| 配置码 | 第 2.5 节生成的“设备配置码”整行内容 |
-| 设备 ID | 必须与服务器的 `$DEVICE_ID.token` 文件名去掉 `.token` 后完全一致 |
-| 本地 SSH | `127.0.0.1:22` |
+| 配置码 | 服务器 `device add` 输出的整行 `rssh1:...` |
+| 设备 ID | UI 已生成并显示的 ID，不需要修改 |
+| 本地 SSH | 默认 `127.0.0.1:22` |
 
-例如：
+点击“保存”→“启动”。成功后状态会显示正在连接服务器。让这个窗口保持打开；关闭窗口会停止 client。
 
-```text
-设备 ID：WIN-CLIENT-01
-服务器文件：/etc/rust-ssh/devices/WIN-CLIENT-01.token
-本地 SSH：127.0.0.1:22
+client 只会把服务器中继过来的连接转发到本机 loopback 地址。即使配置了其他局域网，client 也不会把它们作为目标暴露给主控端。
+
+## 4. Mac / Windows 主控端部署 connect
+
+### 4.1 生成 controller 配置码
+
+在服务器执行：
+
+```bash
+sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
 ```
 
-### 3.3 设备 ID 从哪里来，能不能修改
+输出的整行 `rssh1:...` 是 controller 配置码。它可以列出并连接服务器上所有在线 client，因此不要发给任何被控设备，也不要放进源码仓库。
 
-GUI 第一次打开时，设备 ID 默认读取 Windows 的 `COMPUTERNAME`；如果系统没有这个变量，会尝试 `HOSTNAME`，再没有就使用 `windows-agent`。它不是硬件序列号，也不是服务器自动分配的 ID，只是 relay 用来区分设备的稳定名称。
+controller 只有一个 token 文件，但可以有多个 connect 实例使用同一份 controller 配置码。v0.4 没有 controller 子账号和细粒度 ACL；需要不同权限时应另行设计权限层。
 
-可以修改。建议使用容易认出的唯一名称，例如 `WIN-CLIENT-01` 或 `OFFICE-PC`。修改时必须同时完成下面四步：
+### 4.2 下载并打开 connect
 
-1. 在服务器的 `/etc/rust-ssh/devices/` 下为新 ID 创建一个 token 文件；
-2. 用这个新 token 重新生成设备配置码；
-3. 在 client GUI 中同时改成新 ID，并粘贴新的设备配置码；
-4. 重启 relay，然后启动 client。
-
-只改 GUI 里的设备 ID、继续使用旧配置码，或者只改服务器文件名，都会认证失败。旧 token 文件可以在确认新 ID 上线后删除；删除后重启 relay，旧 ID 就不能重新注册。
-
-点击“保存”→“启动”。看到正在连接服务器后，让 client 窗口保持打开；关闭窗口，client 就会停止。
-
-client 的 GUI 配置保存在：
-
-```text
-%APPDATA%\rust-ssh\client.json
-```
-
-client 只主动连接服务器，不监听公网端口，也不会因为 Windows 的 `sshd` 自动启动而自动启动。
-
-## 4. Mac / Windows：配置主控端 connect
-
-### 4.1 下载程序
-
-从 [v0.3.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.3.0) 下载对应系统的文件：
+从 [v0.4.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.0) 下载：
 
 ```text
 macOS Apple Silicon：rust-ssh-connect-macos-aarch64
 Windows x86-64：rust-ssh-connect-windows-x86_64.exe
 ```
 
-主控端还需要系统 OpenSSH：
-
-```bash
-ssh -V
-```
-
-macOS 如果提示没有执行权限：
+Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装 Rust。macOS 下载后如没有执行权限，执行：
 
 ```bash
 chmod +x rust-ssh-connect-macos-aarch64
 ```
 
-### 4.2 配置 GUI
+主控端还需要系统 OpenSSH。检查：
+
+```bash
+ssh -V
+```
+
+### 4.3 使用 connect GUI
 
 打开 connect，填写：
 
 | GUI 字段 | 填写内容 |
 | --- | --- |
-| 配置码 | 第 2.5 节生成的“主控配置码”整行内容 |
-| SSH 用户 | Windows 上实际使用的 OpenSSH 登录用户名，例如 `windows-user` |
+| 配置码 | 服务器生成的 controller 配置码 |
+| SSH 用户 | Windows OpenSSH 的登录用户名，例如 `windows-user` |
 
-点击“刷新设备”。如果 Windows client 已经启动，列表里会出现它的设备 ID。选择设备后点击“配置 SSH”，或直接点击“连接选中设备”。
+点击“刷新设备”。Windows client 正在运行且已通过认证时，列表会出现它的设备 ID。选择设备后可以：
 
-connect 的配置保存在：
+- 点击“配置 SSH”：只写入 SSH 配置，不立即打开终端；
+- 点击“连接选中设备”：配置并打开系统 Terminal 或命令窗口。
+
+connect 的配置文件位置：
 
 ```text
 macOS：~/.config/rust-ssh/connect.json
 Windows：%APPDATA%\rust-ssh\connect.json
 ```
 
-### 4.3 使用 Terminal、PowerShell 或 VS Code
-
-配置 SSH 后，connect 会在用户 SSH 配置中写入一个受管理区块：
+配置 SSH 后，connect 会在系统 SSH 配置中写入一个受管理区块：
 
 ```text
 macOS：~/.ssh/config
 Windows：%USERPROFILE%\.ssh\config
 ```
 
-设备 ID 为 `WIN-CLIENT-01` 时，直接执行：
+示例设备 ID 下，直接使用：
 
 ```bash
-ssh rust-ssh-WIN-CLIENT-01
+ssh rust-ssh-rssh-0123456789abcdef0123456789abcdef
 ```
 
-也可以在 VS Code Remote-SSH 中选择 `rust-ssh-WIN-CLIENT-01`。第一次连接时输入 Windows 账户的 SSH 密码或使用 Windows 上已配置的 SSH 密钥。
+也可以在 VS Code Remote-SSH 中选择同名主机。第一次 SSH 登录时，输入 Windows OpenSSH 用户的密码，或使用该 Windows 用户已经配置好的 SSH 公钥。
 
-配置完成后，connect GUI 不需要一直打开；SSH 会调用 connect 的内部 proxy 模式。但是：
+配置完成后，connect GUI 可以关闭，因为 SSH 会通过 SSH `ProxyCommand` 自动调用 connect 的内部代理模式。但是 Windows client 必须继续运行；如果移动或删除 connect 可执行文件，需要重新打开 GUI 并再次点击“配置 SSH”。
 
-- Windows client 必须一直运行；
-- 不要移动或删除 `rust-ssh-connect` 可执行文件，因为 SSH 配置会引用它的路径；
-- 如果移动了 connect，重新打开 GUI，并对设备点击一次“配置 SSH”。
+## 5. 配置文件和密钥分别放在哪里
 
-多台 Mac/Windows 主控端可以使用同一份主控配置码，它们共享 controller token 的全部权限。不要把这份配置码发给任何被控设备。
+### 5.1 服务器
 
-## 5. 添加、替换和删除设备
+| 路径 | 内容 | 保密要求 |
+| --- | --- | --- |
+| `/etc/rust-ssh/identity.key` | 服务器 Noise 私钥 | 只留服务器 |
+| `/etc/rust-ssh/identity.pub` | 服务器 Noise 公钥 | 可随配置码分发 |
+| `/etc/rust-ssh/controller.token` | 主控总 token | 只留服务器，不给 client |
+| `/etc/rust-ssh/devices/<device_id>.token` | 对应设备 token | 只给对应 client |
+| `/etc/rust-ssh/relay.env` | relay 启动变量 | 不含 token 内容，可保留在服务器 |
 
-### 添加设备
+### 5.2 Windows client
 
-在服务器上设置新设备 ID，例如 `LAPTOP-ABC123`：
+```text
+%APPDATA%\rust-ssh\client.json
+```
+
+其中保存设备 ID、设备配置码和本地 SSH 目标。设备配置码包含设备 token，应当按秘密材料保护。
+
+### 5.3 Mac / Windows connect
+
+```text
+macOS：~/.config/rust-ssh/connect.json
+Windows：%APPDATA%\rust-ssh\connect.json
+```
+
+其中保存 controller 配置码。它的权限等同于 controller token，不要复制给 client。
+
+## 6. 添加第二台或更多 Windows client
+
+每台设备都重复同一套顺序，不要复用设备 token：
+
+1. 打开新 Windows client，复制 UI 显示的新设备 ID；
+2. 服务器执行 `rust-ssh device add --device-id <新ID> ...`；
+3. 重启 relay；
+4. 把输出的设备配置码粘贴到对应 client；
+5. 在 connect 点击“刷新设备”。
+
+服务器上的 token 文件是一台设备一个：
+
+```text
+/etc/rust-ssh/devices/rssh-设备A.token
+/etc/rust-ssh/devices/rssh-设备B.token
+```
+
+不同设备的 token 不相同。某一台设备 token 泄露时，攻击者只能尝试以那一个设备 ID 注册，不能使用它列出或连接其他设备。
+
+## 7. 修改主机名、替换设备身份和升级
+
+### 7.1 修改 Windows 计算机名
+
+可以随意修改 Windows 计算机名。rust-ssh v0.4 不读取 `COMPUTERNAME`，设备 ID 与主机名无关，所以修改主机名不会让设备掉线，也不需要重新注册。
+
+### 7.2 更换一台设备的 rust-ssh 身份
+
+通常不需要更换。只有在你想让同一台电脑作为“全新设备”登记，或怀疑旧设备配置码泄露时才这样做：
+
+1. 关闭 client；
+2. 在 Windows PowerShell 执行备份（不要直接删除）：
+
+```powershell
+Move-Item "$env:APPDATA\rust-ssh\client.json" "$env:APPDATA\rust-ssh\client.json.bak"
+```
+
+3. 重新打开 client，它会生成新的随机设备 ID；
+4. 用新 ID 执行一次服务器 `device add`；
+5. 重启 relay，把新配置码粘贴到 client；
+6. 确认新设备在线后，再在服务器移走旧 token，并重启 relay。
+
+移走旧 token 的可恢复写法：
 
 ```bash
-NEW_DEVICE_ID=LAPTOP-ABC123
-sudo test -e /etc/rust-ssh/devices/$NEW_DEVICE_ID.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/$NEW_DEVICE_ID.token >/dev/null)
-sudo chown root:rustssh /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
-sudo chmod 0640 /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
+sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token.disabled"
 sudo systemctl restart rust-ssh-relay
 ```
 
-生成这个设备自己的配置码：
+`*.token.disabled` 不会被 relay 当作设备 token 读取；需要恢复时再改回 `.token` 文件名并重启服务。
+
+### 7.3 从 v0.3 升级到 v0.4
+
+服务器升级时保留：
+
+- `identity.key` 和 `identity.pub`；
+- `controller.token`；
+- 已有的 `/etc/rust-ssh/devices/` 目录。
+
+替换 `/usr/local/bin/rust-ssh` 后执行：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
-```
-
-把新配置码交给对应的 Windows client。所有 connect 仍然使用同一份 controller 配置码。
-
-### 删除或替换设备 token
-
-删除并重启 relay 后，该设备不能再次注册：
-
-```bash
-sudo rm /etc/rust-ssh/devices/WIN-CLIENT-01.token
 sudo systemctl restart rust-ssh-relay
 ```
 
-如果只想替换 token，删除旧文件、生成同名新文件、设置权限，再重启 relay。旧设备配置码会失效。
+旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。
 
-替换 `/etc/rust-ssh/controller.token` 也需要重启 relay，并重新给所有主控端生成配置码；controller token 泄露时应立即这样做。
+### 7.4 替换 controller token
 
-## 6. 认证和安全边界
+controller token 泄露时，应在服务器生成新 token、重启 relay，并为所有 connect 重新生成配置码。先备份旧文件，再执行：
 
-- relay 只对外监听一个 TCP 端口：默认 `24443`；client 和 connect 不监听公网端口。
-- Noise server key 用来确认连接的是正确的服务器；不需要域名，也不需要 X.509 证书。
-- 每个设备 token 只绑定一个 `device_id`；某台设备 token 泄露，不能用来列出或连接其他设备。
-- controller token 是主控密钥，泄露后可以列出并连接所有在线设备；它不能分发给 client。
-- relay 会拒绝未知设备 ID、错误 token，并限制握手时间、连接数、帧大小和单设备并发会话。
-- 公网端口仍然可能被扫描；云安全组和服务器防火墙只开放 `24443/tcp`，并保持系统更新。
+```bash
+sudo mv /etc/rust-ssh/controller.token /etc/rust-ssh/controller.token.old
+openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null
+sudo chown root:rustssh /etc/rust-ssh/controller.token
+sudo chmod 0640 /etc/rust-ssh/controller.token
+sudo systemctl restart rust-ssh-relay
+```
 
-当前版本不包含 IP 限速、失败封禁、ACL、审计、token 热吊销和 BitLocker 等功能。
+然后按第 4.1 节重新生成 controller 配置码。旧 controller 配置码会失效。
 
-## 7. 常见问题
+## 8. server 和 client 各自暴露什么
+
+| 端 | 对外监听 | 主动连接 | 需要给对方的内容 |
+| --- | --- | --- | --- |
+| 服务器 relay | `0.0.0.0:24443` 一个 TCP 端口 | 不需要主动连 client | 给 client/connect：服务器 IP、端口和 `identity.pub`（通过配置码） |
+| Windows client | 不监听公网端口 | 连接服务器 `24443` | 给服务器管理员：UI 显示的设备 ID；从服务器接收自己的设备配置码 |
+| Mac/Windows connect | 不监听公网端口 | 连接服务器 `24443` | 从服务器接收 controller 配置码；不需要给 client 任何 token |
+
+server 和 client 之间不是直接暴露 SSH 端口。服务器只中继加密流量；真正的 SSH 服务仍是 Windows 本机的 `127.0.0.1:22`。
+
+## 9. 安全边界
+
+- 不需要 X.509 证书，也不需要域名；Noise server key pinning 用于防止把配置码指向错误的服务器。
+- 公网端口可以被扫描，这是所有公网服务都无法完全避免的；扫描者没有正确 token 不能完成角色认证。
+- server 会检查协议版本、设备 ID、controller/device token，并限制握手时间、总连接数、帧大小和单设备并发会话。
+- device token 是单设备权限；controller token 是全设备权限。绝不能把 controller 配置码分发给 client。
+- 云安全组和 Ubuntu 防火墙只开放 `24443/tcp`，保持 Ubuntu、Windows OpenSSH 和 rust-ssh Release 更新。
+- 当前版本不包含 IP 限速、失败封禁、细粒度 ACL、审计、token 热加载、BitLocker 或证书体系。
+
+## 10. 常见问题
 
 ### relay 启动失败
 
@@ -370,20 +466,49 @@ sudo systemctl status rust-ssh-relay --no-pager
 sudo journalctl -u rust-ssh-relay -n 100 --no-pager
 ```
 
-重点检查四个路径是否存在、权限是否正确，以及 `24443` 是否已经被其他程序占用。
-
-### connect 中没有设备
-
-确认 Windows client 窗口仍然打开并显示正在运行；确认云安全组和服务器防火墙放行 `24443/tcp`；确认 connect 使用的是 controller 配置码，而不是某台设备配置码。
+重点检查：`identity.key` 是否存在、controller token 是否至少 32 个非空白字符、`devices` 目录是否存在、服务用户是否能读取这些路径，以及 `24443` 是否已被占用。
 
 ### `device is not configured`
 
-确认设备 ID 与 `/etc/rust-ssh/devices/<device_id>.token` 的文件名完全一致，并在新增或修改 token 后重启 relay。
+说明服务器没有加载这个设备 ID 对应的 token。检查 ID 是否完整复制，确认文件名为 `/etc/rust-ssh/devices/<完整设备ID>.token`，然后执行 `sudo systemctl restart rust-ssh-relay`。
+
+### `device pairing code` 不匹配
+
+设备配置码只能粘贴回生成它的那台 client。不要手动修改 UI 中的 ID，也不要把 controller 配置码粘贴到 client。
+
+### connect 看不到设备
+
+确认 client 已点击“启动”且窗口仍开着；确认服务器 `24443/tcp` 在云安全组和防火墙中放行；确认 connect 使用的是 controller 配置码，而不是某台设备的配置码。
 
 ### `public key mismatch`
 
-不要重新生成 identity key。使用当前服务器上的 `/etc/rust-ssh/identity.pub` 重新生成配置码。
+不要重新运行 `keygen`。服务器身份变化后，旧配置码会失效；使用当前服务器的 `/etc/rust-ssh/identity.pub` 重新生成配置码，并确保 IP 和端口正确。
 
-### SSH 已连通但认证失败
+### SSH 已连通但登录失败
 
-这说明 rust-ssh 中继大概率已经正常。检查 Windows 的 OpenSSH Server、Windows 用户名、密码或 SSH 公钥配置；rust-ssh 不替代 Windows SSH 的用户认证。
+这通常说明 rust-ssh 中继已经正常。检查 Windows 的 OpenSSH Server、SSH 用户名、Windows 密码或该用户的 SSH 公钥配置；rust-ssh 不替代 Windows SSH 的用户认证。
+
+## 11. 源码构建
+
+普通部署不需要 Rust。开发者从源码构建时，在对应系统安装 Rust stable 和 Cargo，然后执行：
+
+```bash
+cargo fmt --all -- --check
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets --all-features -- -D warnings
+```
+
+构建服务器 relay：
+
+```bash
+cargo build --release --locked --bin rust-ssh
+```
+
+构建 Windows client 或 connect：
+
+```bash
+cargo build --release --locked --features desktop --bin rust-ssh-client
+cargo build --release --locked --features desktop --bin rust-ssh-connect
+```
+
+桌面前端使用 Rust/egui 编译为原生程序，不需要 Node.js、Tauri 或额外运行时。

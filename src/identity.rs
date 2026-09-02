@@ -67,6 +67,30 @@ pub fn generate(private_path: &Path, public_path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn generate_token() -> Result<String> {
+    let builder = Builder::new(noise_params());
+    let keypair = builder
+        .generate_keypair()
+        .map_err(|error| anyhow!("generating token randomness: {error}"))?;
+    Ok(hex::encode(keypair.private))
+}
+
+pub fn write_token(path: &Path, token: &str) -> Result<()> {
+    create_parent(path)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o640);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(token.trim().as_bytes())?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(())
+}
+
 pub fn load_public_key(path: &Path) -> Result<[u8; STATIC_KEY_SIZE]> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("reading pinned server public key {}", path.display()))?;

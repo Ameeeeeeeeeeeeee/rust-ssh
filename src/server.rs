@@ -1,4 +1,6 @@
+use crate::bootstrap;
 use crate::bridge;
+use crate::device_id;
 use crate::identity::ServerIdentity;
 use crate::noise::{self, RelayStream};
 use crate::protocol::{read_frame, write_frame, DeviceInfo, Message, Role, PROTOCOL_VERSION};
@@ -104,6 +106,39 @@ pub async fn run(config: Config) -> Result<()> {
     }
 }
 
+pub fn add_device(
+    devices_dir: &Path,
+    device_id: &str,
+    server: &str,
+    server_key_path: &Path,
+) -> Result<String> {
+    if !device_id::is_generated(device_id) {
+        return Err(anyhow!(
+            "invalid device id; use the generated ID shown by the v0.4 client"
+        ));
+    }
+    fs::create_dir_all(devices_dir)
+        .with_context(|| format!("creating device token directory {}", devices_dir.display()))?;
+    let token_path = devices_dir.join(format!("{device_id}.token"));
+    if token_path.exists() {
+        return Err(anyhow!(
+            "device is already registered: {device_id}; remove the old token first if this is intentional"
+        ));
+    }
+
+    let server_key = crate::identity::load_public_key(server_key_path)?;
+    let token = crate::identity::generate_token()?;
+    let pairing_code = bootstrap::encode(bootstrap::Config {
+        server: server.to_owned(),
+        server_key,
+        token: token.clone(),
+        device_id: Some(device_id.to_owned()),
+    })?;
+    crate::identity::write_token(&token_path, &token)
+        .with_context(|| format!("writing device token {}", token_path.display()))?;
+    Ok(pairing_code)
+}
+
 async fn handle_connection(mut stream: RelayStream, state: State) -> Result<()> {
     let hello = read_frame(&mut stream).await?;
     let (version, role, device_id, token) = match hello {
@@ -149,7 +184,7 @@ fn authenticate(
     match role {
         Role::Agent => {
             let device_id = device_id.ok_or_else(|| anyhow!("agent did not provide device id"))?;
-            if !valid_device_id(device_id) {
+            if !device_id::is_valid(device_id) {
                 return Err(anyhow!("invalid device id"));
             }
             let expected_token = device_tokens
@@ -193,7 +228,7 @@ fn load_device_tokens(directory: &Path) -> Result<HashMap<String, Arc<str>>> {
         let Some(device_id) = file_name.strip_suffix(".token") else {
             continue;
         };
-        if !valid_device_id(device_id) {
+        if !device_id::is_valid(device_id) {
             return Err(anyhow!(
                 "device token filename must be <device_id>.token with a valid device id: {}",
                 path.display()
@@ -230,7 +265,7 @@ fn valid_token_length(token: &str) -> bool {
 }
 
 async fn handle_agent(mut stream: RelayStream, state: State, device_id: String) -> Result<()> {
-    if !valid_device_id(&device_id) {
+    if !device_id::is_valid(&device_id) {
         return Err(anyhow!("invalid device id"));
     }
 
@@ -241,6 +276,9 @@ async fn handle_agent(mut stream: RelayStream, state: State, device_id: String) 
     });
     {
         let mut devices = state.devices.lock().await;
+        if devices.contains_key(&device_id) {
+            return Err(anyhow!("device already has an active client: {device_id}"));
+        }
         devices.insert(device_id.clone(), device.clone());
     }
     info!(device = %device_id, "agent registered");
@@ -276,14 +314,6 @@ async fn handle_agent(mut stream: RelayStream, state: State, device_id: String) 
     unregister(&state, &device_id, &device).await;
     info!(device = %device_id, "agent disconnected");
     Ok(())
-}
-
-fn valid_device_id(device_id: &str) -> bool {
-    !device_id.is_empty()
-        && device_id.len() <= 128
-        && device_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> {
@@ -539,5 +569,38 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn add_device_persists_token_and_binds_pairing_code() {
+        let root = std::env::temp_dir().join(format!("rust-ssh-device-test-{}", session_id()));
+        let devices_dir = root.join("devices");
+        let identity_key = root.join("identity.key");
+        let identity_public = root.join("identity.pub");
+        let device_id = "rssh-0123456789abcdef0123456789abcdef";
+
+        crate::identity::generate(&identity_key, &identity_public).unwrap();
+        let pairing_code = add_device(
+            &devices_dir,
+            device_id,
+            "198.51.100.10:24443",
+            &identity_public,
+        )
+        .unwrap();
+
+        let pairing = crate::bootstrap::decode(&pairing_code).unwrap();
+        assert_eq!(pairing.device_id.as_deref(), Some(device_id));
+        let token_path = devices_dir.join(format!("{device_id}.token"));
+        let token = fs::read_to_string(&token_path).unwrap();
+        assert_eq!(token.trim().len(), 64);
+        assert!(add_device(
+            &devices_dir,
+            device_id,
+            "198.51.100.10:24443",
+            &identity_public,
+        )
+        .is_err());
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
