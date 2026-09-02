@@ -298,7 +298,9 @@ Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装
 chmod +x Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。Connect 会常驻 Windows 右下角托盘，关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
+
+Client 和 Connect 都使用单实例锁，重复启动只会保留一个 GUI；Connect 的 SSH `ProxyCommand` 子进程不受此限制，因此多个 Terminal/VS Code 连接不会被拦截。升级 MSI 时安装器会先关闭旧程序。历史版本留下的旧任务栏固定图标可能需要手动取消固定一次，再固定新版本的开始菜单图标。
 
 主控端还需要系统 OpenSSH。检查：
 

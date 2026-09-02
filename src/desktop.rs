@@ -52,8 +52,9 @@ fn connection_state_color(state: ClientConnectionState) -> egui::Color32 {
 }
 
 #[cfg(windows)]
-struct ClientTray {
+struct AppTray {
     icon: TrayIcon,
+    app_name: &'static str,
 }
 
 #[cfg(windows)]
@@ -64,8 +65,8 @@ struct TraySignals {
 }
 
 #[cfg(windows)]
-impl ClientTray {
-    fn new() -> Option<Self> {
+impl AppTray {
+    fn new(app_name: &'static str) -> Option<Self> {
         let show = MenuItem::with_id("show", "显示主界面", true, None);
         let quit = MenuItem::with_id("quit", "关闭", true, None);
         let menu = Menu::new();
@@ -73,27 +74,28 @@ impl ClientTray {
         let icon = tray_icon_for_state(ClientConnectionState::Stopped)?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("Rust-SSH-Client")
+            .with_tooltip(app_name)
             .with_menu_on_left_click(false)
             .with_menu_on_right_click(true)
             .with_icon(icon)
             .build()
             .ok()?;
-        Some(Self { icon })
+        Some(Self { icon, app_name })
     }
 
     fn set_state(&self, state: ClientConnectionState) {
         if let Some(icon) = tray_icon_for_state(state) {
             let _ = self.icon.set_icon(Some(icon));
         }
-        let tooltip = match state {
-            ClientConnectionState::Stopped => "Rust-SSH-Client：未运行",
-            ClientConnectionState::Connecting => "Rust-SSH-Client：正在连接",
-            ClientConnectionState::Connected => "Rust-SSH-Client：已连接",
-            ClientConnectionState::Retrying => "Rust-SSH-Client：正在重试",
-            ClientConnectionState::Error => "Rust-SSH-Client：连接失败",
+        let status = match state {
+            ClientConnectionState::Stopped => "未运行",
+            ClientConnectionState::Connecting => "正在连接",
+            ClientConnectionState::Connected => "已连接",
+            ClientConnectionState::Retrying => "正在重试",
+            ClientConnectionState::Error => "连接失败",
         };
-        let _ = self.icon.set_tooltip(Some(tooltip));
+        let tooltip = format!("{}：{status}", self.app_name);
+        let _ = self.icon.set_tooltip(Some(&tooltip));
     }
 }
 
@@ -152,6 +154,80 @@ fn install_tray_event_handlers(signals: &Arc<TraySignals>, context: &egui::Conte
     }));
 }
 
+#[cfg(windows)]
+pub struct SingleInstance {
+    handle: *mut std::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl SingleInstance {
+    pub fn acquire(name: &str) -> Option<Self> {
+        use std::iter::once;
+        use std::os::windows::ffi::OsStrExt;
+
+        let name: Vec<u16> = std::ffi::OsStr::new(name)
+            .encode_wide()
+            .chain(once(0))
+            .collect();
+        let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return None;
+        }
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return None;
+        }
+        Some(Self { handle })
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SingleInstance {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn set_windows_app_user_model_id(id: &str) {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+
+    let id: Vec<u16> = std::ffi::OsStr::new(id)
+        .encode_wide()
+        .chain(once(0))
+        .collect();
+    let result = unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
+    if result != 0 {
+        tracing::debug!(code = result, "could not set Windows AppUserModelID");
+    }
+}
+
+#[cfg(windows)]
+const ERROR_ALREADY_EXISTS: u32 = 183;
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    fn CreateMutexW(
+        attributes: *mut std::ffi::c_void,
+        initial_owner: i32,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
+    fn GetLastError() -> u32;
+}
+
+#[cfg(windows)]
+#[link(name = "shell32")]
+unsafe extern "system" {
+    fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct ClientSettings {
@@ -198,7 +274,7 @@ pub struct ClientApp {
     agent_thread: Option<JoinHandle<()>>,
     status_rx: Option<Receiver<agent::Status>>,
     #[cfg(windows)]
-    tray: Option<ClientTray>,
+    tray: Option<AppTray>,
     #[cfg(windows)]
     tray_signals: Arc<TraySignals>,
     #[cfg(windows)]
@@ -221,7 +297,7 @@ impl ClientApp {
             agent_thread: None,
             status_rx: None,
             #[cfg(windows)]
-            tray: ClientTray::new(),
+            tray: AppTray::new("Rust-SSH-Client"),
             #[cfg(windows)]
             tray_signals,
             #[cfg(windows)]
@@ -446,10 +522,17 @@ pub struct ConnectApp {
     devices: Vec<String>,
     selected_device: Option<String>,
     status: String,
+    connection_state: ClientConnectionState,
     refresh_rx: Option<Receiver<std::result::Result<Vec<String>, String>>>,
     last_refresh: Instant,
     first_update: bool,
     host_editor: Option<HostAliasEditor>,
+    #[cfg(windows)]
+    tray: Option<AppTray>,
+    #[cfg(windows)]
+    tray_signals: Arc<TraySignals>,
+    #[cfg(windows)]
+    allow_close: bool,
 }
 
 struct HostAliasEditor {
@@ -461,15 +544,35 @@ impl ConnectApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         install_cjk_font(&creation_context.egui_ctx);
         install_ui_style(&creation_context.egui_ctx);
+        #[cfg(windows)]
+        let tray_signals = Arc::new(TraySignals::default());
+        #[cfg(windows)]
+        install_tray_event_handlers(&tray_signals, &creation_context.egui_ctx);
         Self {
             settings: load_settings("connect.json"),
             devices: Vec::new(),
             selected_device: None,
             status: "请粘贴配置码".to_owned(),
+            connection_state: ClientConnectionState::Stopped,
             refresh_rx: None,
             last_refresh: Instant::now(),
             first_update: true,
             host_editor: None,
+            #[cfg(windows)]
+            tray: AppTray::new("Rust-SSH-Connect"),
+            #[cfg(windows)]
+            tray_signals,
+            #[cfg(windows)]
+            allow_close: false,
+        }
+    }
+
+    fn set_connection_state(&mut self, state: ClientConnectionState, status: String) {
+        self.connection_state = state;
+        self.status = status;
+        #[cfg(windows)]
+        if let Some(tray) = &self.tray {
+            tray.set_state(state);
         }
     }
 
@@ -487,12 +590,18 @@ impl ConnectApp {
         let pairing = match bootstrap::decode(&self.settings.pairing_code) {
             Ok(pairing) => pairing,
             Err(error) => {
-                self.status = format!("配置码无效：{error}");
+                self.set_connection_state(
+                    ClientConnectionState::Error,
+                    format!("配置码无效：{error}"),
+                );
                 return;
             }
         };
         if let Err(error) = save_settings("connect.json", &self.settings) {
-            self.status = format!("保存配置失败：{error}");
+            self.set_connection_state(
+                ClientConnectionState::Error,
+                format!("保存配置失败：{error}"),
+            );
             return;
         }
 
@@ -512,7 +621,10 @@ impl ConnectApp {
             let _ = sender.send(result);
         });
         self.refresh_rx = Some(receiver);
-        self.status = "正在查找在线设备…".to_owned();
+        self.set_connection_state(
+            ClientConnectionState::Connecting,
+            "正在查找在线设备…".to_owned(),
+        );
     }
 
     fn poll_refresh(&mut self) {
@@ -525,16 +637,25 @@ impl ConnectApp {
                 self.devices = devices;
                 self.selected_device =
                     previous.filter(|id| self.devices.iter().any(|item| item == id));
-                self.status = format!("已找到 {} 台在线设备", self.devices.len());
+                self.set_connection_state(
+                    ClientConnectionState::Connected,
+                    format!("已找到 {} 台在线设备", self.devices.len()),
+                );
                 self.last_refresh = Instant::now();
             }
             Ok(Err(error)) => {
-                self.status = format!("查找失败：{error}");
+                self.set_connection_state(
+                    ClientConnectionState::Error,
+                    format!("查找失败：{error}"),
+                );
                 self.last_refresh = Instant::now();
             }
             Err(TryRecvError::Empty) => self.refresh_rx = Some(receiver),
             Err(TryRecvError::Disconnected) => {
-                self.status = "查找线程已退出".to_owned();
+                self.set_connection_state(
+                    ClientConnectionState::Error,
+                    "查找线程已退出".to_owned(),
+                );
                 self.last_refresh = Instant::now();
             }
         }
@@ -649,10 +770,34 @@ impl ConnectApp {
         }
         Ok(())
     }
+
+    #[cfg(windows)]
+    fn poll_tray(&mut self, context: &egui::Context) {
+        if self.tray_signals.quit.swap(false, Ordering::AcqRel) {
+            self.allow_close = true;
+            self.set_connection_state(ClientConnectionState::Stopped, "正在关闭…".to_owned());
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if self.tray_signals.show.swap(false, Ordering::AcqRel) {
+            context.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            context.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            context.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        if context.input(|input| input.viewport().close_requested())
+            && !self.allow_close
+            && self.tray.is_some()
+        {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            context.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.status = "窗口已隐藏到托盘，Connect 仍可用于 SSH/VS Code".to_owned();
+        }
+    }
 }
 
 impl eframe::App for ConnectApp {
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(windows)]
+        self.poll_tray(context);
         self.poll_refresh();
         if self.first_update {
             self.first_update = false;
@@ -754,7 +899,7 @@ impl eframe::App for ConnectApp {
                 ui.label(&self.status);
             });
             ui.separator();
-            ui.small("配置一次后，可直接使用 Host 昵称连接：ssh 昵称。右键在线设备可修改昵称。");
+            ui.small("关闭窗口会隐藏到右下角托盘；托盘菜单中的“关闭”才会退出 Connect。配置一次后可直接使用 ssh 昵称或 VS Code 连接。");
         });
         self.show_host_editor(context);
         context.request_repaint_after(Duration::from_millis(250));

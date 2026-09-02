@@ -167,7 +167,7 @@ Rust-SSH-Connect-windows-x86_64.msi
 Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows Release 只提供 MSI 安装包，不单独提供便携版 `.exe`；MSI 内部包含 Rust-SSH-Client 或 Rust-SSH-Connect，需要管理员权限并默认安装到 `C:\Program Files` 下，配置放在安装目录的 `data` 文件夹。MSI 支持覆盖安装新版本。Windows agent 的命令行程序仍可从源码编译，但不会作为 Release 附件发布。编译文件不会进入 Git 源码仓库，`target/` 已被 `.gitignore` 忽略。
+Windows Release 只提供 MSI 安装包，不单独提供便携版 `.exe`；MSI 内部包含 Rust-SSH-Client 或 Rust-SSH-Connect，需要管理员权限并默认安装到 `C:\Program Files` 下，配置放在安装目录的 `data` 文件夹。Client 和 Connect 的 GUI 都会常驻 Windows 通知区域，关闭窗口只隐藏，托盘菜单中的“关闭”才会退出；每个程序同时只运行一个 GUI 实例。MSI 支持覆盖安装新版本，升级时会先关闭旧实例。Windows agent 的命令行程序仍可从源码编译，但不会作为 Release 附件发布。编译文件不会进入 Git 源码仓库，`target/` 已被 `.gitignore` 忽略。
 
 ## Security scope
 

@@ -76,6 +76,13 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(windows)]
+    rust_ssh::desktop::set_windows_app_user_model_id("Rust-SSH.Connect");
+    #[cfg(windows)]
+    let Some(_instance) = rust_ssh::desktop::SingleInstance::acquire("Local\\Rust-SSH-Connect") else {
+        return Ok(());
+    };
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([650.0, 470.0])

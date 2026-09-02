@@ -164,7 +164,7 @@ macOS 首次运行前执行：
 chmod +x Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码会保存在安装目录下的 `data` 文件夹中。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码会保存在安装目录下的 `data` 文件夹中。Connect 也会常驻右下角托盘；关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。
 
 打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。依次点击：
 
@@ -180,7 +180,7 @@ ssh rssh-0123456789abcdef0123456789abcdef
 
 如果想改昵称，在设备列表中右键设备，选择“设置 Host 昵称”，保存后重新点击“配置 SSH”。以后直接执行 `ssh 你设置的昵称` 即可；SSH 配置中的 ProxyCommand 是内部实现，不需要手写。
 
-connect 只负责生成 SSH 配置和启动内部代理，配置完成后可以关闭；Windows client 必须保持托盘运行并显示绿色已连接状态。
+connect 只负责生成 SSH 配置和启动内部代理；Windows 下可以关闭窗口隐藏到托盘，之后仍可直接使用 `ssh Host` 或 VS Code。Windows client 也必须保持托盘运行并显示绿色已连接状态。
 
 ## 5. 只要记住这四点
 

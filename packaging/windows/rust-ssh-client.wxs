@@ -2,6 +2,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Rust-SSH-Client" Manufacturer="Rust-SSH" Version="$(var.ProductVersion)" Scope="perMachine" UpgradeCode="9F2A0E95-7C8C-4D98-8B76-AF3C5DBA5E11">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Rust-SSH-Client is already installed." />
+    <util:CloseApplication Id="CloseRustSshClient" Target="rust-ssh-client.exe" CloseMessage="yes" TerminateProcess="1" RebootPrompt="no" Timeout="5" />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="RustSshIcon" SourceFile="$(var.IconPath)" />
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
@@ -36,7 +37,10 @@
     </StandardDirectory>
 
     <Component Id="ClientShortcut" Directory="ApplicationProgramsFolder">
-      <Shortcut Id="ClientStartMenuShortcut" Name="Rust-SSH-Client" Target="[INSTALLFOLDER]rust-ssh-client.exe" WorkingDirectory="INSTALLFOLDER" Icon="RustSshIcon" IconIndex="0" />
+      <Shortcut Id="ClientStartMenuShortcut" Name="Rust-SSH-Client" Target="[#ClientExe]" WorkingDirectory="INSTALLFOLDER" Icon="RustSshIcon" IconIndex="0">
+        <ShortcutProperty Key="System.AppUserModel.ID" Value="Rust-SSH.Client" />
+      </Shortcut>
+      <RemoveFile Id="RemoveLegacyClientShortcut" Name="rust-ssh client.lnk" On="install" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\Rust-SSH" Name="clientInstalled" Type="integer" Value="1" KeyPath="yes" />
     </Component>

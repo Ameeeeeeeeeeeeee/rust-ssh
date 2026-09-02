@@ -2,6 +2,13 @@
 
 #[cfg(feature = "desktop")]
 fn main() -> eframe::Result<()> {
+    #[cfg(windows)]
+    rust_ssh::desktop::set_windows_app_user_model_id("Rust-SSH.Client");
+    #[cfg(windows)]
+    let Some(_instance) = rust_ssh::desktop::SingleInstance::acquire("Local\\Rust-SSH-Client") else {
+        return Ok(());
+    };
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([620.0, 390.0])
