@@ -4,8 +4,8 @@
 
 普通用户部署请直接阅读：
 
-- [client 部署手册：Ubuntu relay + Windows 被控端](docs/client-deployment.md)
-- [connect 部署手册：Mac/Windows 主控端](docs/controller-deployment.md)
+- [三端部署手册（简洁版）](docs/deployment-quickstart.md)
+- [三端部署手册（详细版）](docs/deployment-detailed.md)
 
 ## Architecture
 
