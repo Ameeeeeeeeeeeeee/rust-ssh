@@ -84,12 +84,7 @@ mod windows_impl {
         let prompt = format!(
             "检测到 {display_name} 正在运行。\n\n点击“确定”将强制关闭它并继续安装。\n点击“取消”退出安装，不会关闭程序。"
         );
-        if show_message(
-            &prompt,
-            "Rust-SSH 安装程序",
-            MB_OKCANCEL | MB_ICONWARNING,
-        ) != IDOK
-        {
+        if show_message(&prompt, "Rust-SSH 安装程序", MB_OKCANCEL | MB_ICONWARNING) != IDOK {
             return Err(CloseError::Cancelled);
         }
 
@@ -149,7 +144,10 @@ mod windows_impl {
     }
 
     fn utf16_name(value: &[u16]) -> String {
-        let length = value.iter().position(|character| *character == 0).unwrap_or(value.len());
+        let length = value
+            .iter()
+            .position(|character| *character == 0)
+            .unwrap_or(value.len());
         OsString::from_wide(&value[..length])
             .to_string_lossy()
             .into_owned()
