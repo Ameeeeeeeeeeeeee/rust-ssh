@@ -2,7 +2,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Rust-SSH-Client" Manufacturer="Rust-SSH" Version="$(var.ProductVersion)" Scope="perMachine" UpgradeCode="9F2A0E95-7C8C-4D98-8B76-AF3C5DBA5E11">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Rust-SSH-Client is already installed." />
-    <util:CloseApplication Id="CloseRustSshClient" Target="rust-ssh-client.exe" CloseMessage="no" TerminateProcess="1" RebootPrompt="no" Timeout="0" />
+    <util:CloseApplication Id="CloseRustSshClient" Target="rust-ssh-client.exe" CloseMessage="no" TerminateProcess="1" RebootPrompt="no" Timeout="1" />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="RustSshIcon" SourceFile="$(var.IconPath)" />
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
