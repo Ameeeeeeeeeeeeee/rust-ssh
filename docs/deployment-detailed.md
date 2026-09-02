@@ -54,12 +54,12 @@ export SERVER_IP
 ssh relay-server
 ```
 
-下载 v0.4.0 的 Linux relay 和 systemd 服务文件：
+下载 v0.4.1 的 Linux relay 和 systemd 服务文件：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.0/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.1/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.0/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.1/examples/rust-ssh-relay.service
 ```
 
 如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
@@ -166,7 +166,7 @@ sudo ufw allow 24443/tcp
 
 ### 3.1 下载并首次打开
 
-从 [v0.4.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.0) 下载：
+从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
 
 ```text
 rust-ssh-client-windows-x86_64.exe
@@ -270,7 +270,7 @@ controller 只有一个 token 文件，但可以有多个 connect 实例使用�
 
 ### 4.2 下载并打开 connect
 
-从 [v0.4.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.0) 下载：
+从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
 
 ```text
 macOS Apple Silicon：rust-ssh-connect-macos-aarch64

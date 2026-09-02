@@ -26,12 +26,12 @@ SERVER_IP=198.51.100.10
 export SERVER_IP
 ```
 
-下载 v0.4.0 relay 和 systemd 服务：
+下载 v0.4.1 relay 和 systemd 服务：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.0/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.1/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.0/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.1/examples/rust-ssh-relay.service
 ```
 
 创建服务账户、目录和服务器身份：
@@ -82,7 +82,7 @@ sudo systemctl status rust-ssh-relay --no-pager
 
 ## 2. 部署 Windows client
 
-从 [v0.4.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.0) 下载：
+从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
 
 ```text
 rust-ssh-client-windows-x86_64.exe
@@ -148,7 +148,7 @@ sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key 
 
 这份配置码拥有查看和连接所有已登记设备的权限，只交给可信的主控端。不要粘贴给 client。
 
-从 [v0.4.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.0) 下载：
+从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
 
 ```text
 macOS Apple Silicon：rust-ssh-connect-macos-aarch64

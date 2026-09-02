@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 #[cfg(feature = "desktop")]
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {

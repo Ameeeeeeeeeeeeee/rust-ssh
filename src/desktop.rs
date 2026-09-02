@@ -17,6 +17,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 
 const CLIENT_CONFIG_VERSION: u8 = 1;
+const CJK_FONT_NAME: &str = "rust-ssh-system-cjk";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -63,7 +64,8 @@ pub struct ClientApp {
 }
 
 impl ClientApp {
-    pub fn new(_creation_context: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+        install_cjk_font(&creation_context.egui_ctx);
         Self {
             settings: load_client_settings(),
             status: "未运行".to_owned(),
@@ -217,7 +219,8 @@ pub struct ConnectApp {
 }
 
 impl ConnectApp {
-    pub fn new(_creation_context: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+        install_cjk_font(&creation_context.egui_ctx);
         Self {
             settings: load_settings("connect.json"),
             devices: Vec::new(),
@@ -414,6 +417,79 @@ impl eframe::App for ConnectApp {
             ui.small("配置一次后，可直接使用生成的 rust-ssh-设备名 连接 Terminal 或 VS Code。");
         });
         context.request_repaint_after(Duration::from_millis(250));
+    }
+}
+
+/// Add a system CJK font as a fallback while keeping egui's bundled Latin font first.
+/// The release binaries stay small and use the fonts already installed by the OS.
+pub fn install_cjk_font(context: &egui::Context) {
+    let Some(path) = cjk_font_path() else {
+        tracing::warn!("no system CJK font found; Chinese UI text may be unavailable");
+        return;
+    };
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "could not read system CJK font");
+            return;
+        }
+    };
+
+    let mut definitions = egui::FontDefinitions::default();
+    definitions
+        .font_data
+        .insert(CJK_FONT_NAME.to_owned(), egui::FontData::from_owned(bytes));
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(fonts) = definitions.families.get_mut(&family) {
+            fonts.push(CJK_FONT_NAME.to_owned());
+        }
+    }
+    context.set_fonts(definitions);
+    tracing::debug!(path = %path.display(), "installed system CJK font fallback");
+}
+
+fn cjk_font_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let font_directory = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+            .join("Fonts");
+        ["msyh.ttc", "simhei.ttf", "simsun.ttc", "Deng.ttf"]
+            .into_iter()
+            .map(|name| font_directory.join(name))
+            .find(|path| path.is_file())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+    }
+
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        None
     }
 }
 

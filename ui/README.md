@@ -1,6 +1,6 @@
 # rust-ssh 桌面前端
 
-桌面前端是可选的原生 Rust/egui 应用，不需要 Node.js、Tauri 或额外运行时。运行 Release 二进制不需要安装 Rust。
+桌面前端是可选的原生 Rust/egui 应用，不需要 Node.js、Tauri 或额外运行时。运行 Release 二进制不需要安装 Rust；GUI 会使用系统中文字体作为 fallback。
 
 ## client
 
