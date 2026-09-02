@@ -511,7 +511,7 @@ fn default_device_id() -> String {
 fn default_user() -> String {
     std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| "ame".to_owned())
+        .unwrap_or_else(|_| "windows-user".to_owned())
 }
 
 const MANAGED_SSH_BEGIN: &str = "# >>> rust-ssh managed begin >>>";

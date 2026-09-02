@@ -1,6 +1,6 @@
 # rust-ssh
 
-面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设备主动连接服务器 + 服务器中继”模式。Windows client 和 Mac/Windows connect 都只需要主动访问 VPS，因此可以跨越不同 AP、AP 隔离和没有端口映射的网络。
+面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设备主动连接服务器 + 服务器中继”模式。Windows client 和 Mac/Windows connect 都只需要主动访问服务器，因此可以跨越不同 AP、AP 隔离和没有端口映射的网络。
 
 普通用户部署请直接阅读：
 
@@ -11,7 +11,7 @@
 
 ```text
 Windows client ──主动 Noise 连接──┐
-                                  ├── Ubuntu VPS relay:24443
+                                  ├── Ubuntu 服务器 relay:24443
 Mac/Windows connect ─主动连接─────┘
                                       │
                                       └──目标 client ──本机 127.0.0.1:22
@@ -21,7 +21,7 @@ Mac/Windows connect ─主动连接─────┘
 - 不同设备可以并行连接；
 - 同一设备同时只允许一个 SSH 会话；
 - client 默认只允许连接本机 loopback SSH，避免成为内网代理；
-- 公网只需要开放 VPS 的一个 TCP 端口，默认 `24443`；
+- 公网只需要开放服务器的一个 TCP 端口，默认 `24443`；
 - client 和 connect 不监听公网端口；
 - RustDesk 的 `hbbs/hbbr` 端口保持不变，不要复用。
 
@@ -46,6 +46,7 @@ relay 启动时读取：
 - 单个 agent token 泄露只能注册或伪装对应设备，不能 list 或连接其他设备；
 - controller token 是 relay 的主控密钥，泄露后可 list 和连接所有设备，绝不能分发给 agent；
 - 设备 token 文件在 relay 启动时加载，新增、删除或修改后重启 relay 生效。
+- `device_id` 是可自定义的稳定设备名，不是硬件序列号；它必须与 relay 上对应的 `<device_id>.token` 文件名一致。
 
 Hello wire 格式、Noise、控制帧格式和 bridge 未改变。
 
@@ -57,9 +58,9 @@ Hello wire 格式、Noise、控制帧格式和 bridge 未改变。
 
 ```bash
 rust-ssh pair-code \
-  --server 203.0.113.10:24443 \
+  --server 198.51.100.10:24443 \
   --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
+  --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
 ```
 
 ## Relay configuration
@@ -108,10 +109,10 @@ rust-ssh relay \
 
 ```powershell
 rust-ssh.exe agent `
-  --server 203.0.113.10:24443 `
+  --server 198.51.100.10:24443 `
   --server-key C:\ProgramData\rust-ssh\server-identity.pub `
-  --token-file C:\ProgramData\rust-ssh\DESKTOP-KH8O1JM.token `
-  --device-id DESKTOP-KH8O1JM `
+  --token-file C:\ProgramData\rust-ssh\WIN-CLIENT-01.token `
+  --device-id WIN-CLIENT-01 `
   --target 127.0.0.1:22
 ```
 
@@ -119,7 +120,7 @@ rust-ssh.exe agent `
 
 ```bash
 rust-ssh list \
-  --server 203.0.113.10:24443 \
+  --server 198.51.100.10:24443 \
   --server-key ~/.config/rust-ssh/server-identity.pub \
   --token-file ~/.config/rust-ssh/controller.token
 ```
@@ -165,6 +166,6 @@ rust-ssh-connect-macos-aarch64
 
 ## Security scope
 
-公网端口仍可能被扫描，部署时应使用云安全组和 VPS 防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token 和单设备单会话限制。
+公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token 和单设备单会话限制。
 
 当前明确不包含：IP 限速、失败封禁、ACL、token 热吊销、审计、BitLocker 和证书体系。

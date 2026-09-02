@@ -68,7 +68,7 @@ fn validate_server(server: &str) -> Result<String> {
     let server = server.trim();
     let address: SocketAddr = server
         .parse()
-        .map_err(|_| anyhow!("服务器地址必须是公网 IP:端口，例如 203.0.113.10:24443"))?;
+        .map_err(|_| anyhow!("服务器地址必须是公网 IP:端口，例如 198.51.100.10:24443"))?;
     if address.port() == 0 || address.ip().is_unspecified() {
         return Err(anyhow!("服务器地址的 IP 或端口无效"));
     }
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn code_round_trip() {
         let original = Config {
-            server: "203.0.113.10:24443".to_owned(),
+            server: "198.51.100.10:24443".to_owned(),
             server_key: [7_u8; identity::STATIC_KEY_SIZE],
             token: "a".repeat(MIN_TOKEN_BYTES),
         };

@@ -4,48 +4,48 @@
 
 | 端 | 系统 | 程序 | 作用 |
 | --- | --- | --- | --- |
-| 服务器端 | Ubuntu VPS | `rust-ssh relay` | 保存身份密钥和 token，负责中继 |
-| 被控端 | Windows x86-64 | `rust-ssh-client` | 主动连接 VPS，并把 SSH 转给本机 |
+| 服务器端 | Ubuntu 服务器 | `rust-ssh relay` | 保存身份密钥和 token，负责中继 |
+| 被控端 | Windows x86-64 | `rust-ssh-client` | 主动连接服务器，并把 SSH 转给本机 |
 | 主控端 | macOS ARM64 或 Windows x86-64 | `rust-ssh-connect` | 查看在线设备，并通过 SSH 连接 |
 
 最终网络关系是：
 
 ```text
-Windows client ──主动连接──> Ubuntu VPS:24443 <──主动连接── Mac/Windows connect
+Windows client ──主动连接──> Ubuntu 服务器:24443 <──主动连接── Mac/Windows connect
        │                                           │
        └──本机 127.0.0.1:22                       └──SSH / VS Code
 ```
 
-两台电脑即使处于不同 AP、开启 AP 隔离或没有公网端口，也能通过 VPS 互通。运行 Release 中的程序不需要安装 Rust；Rust 只用于源码编译。
+两台电脑即使处于不同 AP、开启 AP 隔离或没有公网端口，也能通过服务器互通。运行 Release 中的程序不需要安装 Rust；Rust 只用于源码编译。
 
 ## 1. 准备信息
 
 需要准备：
 
-- Ubuntu VPS 的公网 IP，例如 `203.0.113.10`；
-- 能登录 VPS 的 SSH 方式，例如你的 `ssh Volc-Engine-Test`；
-- Windows 被控机的设备 ID，例如 `DESKTOP-KH8O1JM`；
-- Windows 上实际登录 OpenSSH 的用户名，例如 `ame`。
+- Ubuntu 服务器的公网 IP，例如 `198.51.100.10`；
+- 能登录服务器的 SSH 方式，例如 `ssh relay-server`；
+- Windows 被控机的设备 ID，例如 `WIN-CLIENT-01`；
+- Windows 上实际登录 OpenSSH 的用户名，例如 `windows-user`。
 
-设备 ID 只能包含字母、数字、`.`、`_`、`-`，并且每台设备必须唯一。
+设备 ID 只能包含字母、数字、`.`、`_`、`-`，并且每台设备必须唯一。这里的示例值都是虚构的。
 
-`Volc-Engine-Test` 只是本机 SSH 配置里的登录别名，不能放进 rust-ssh 配置码；配置码必须使用 VPS 公网 IP 和 `24443` 端口。
+`relay-server` 只是本机 SSH 配置里的示例登录别名，不能放进 rust-ssh 配置码；配置码必须使用服务器公网 IP 和 `24443` 端口。
 
-## 2. Ubuntu VPS：安装并运行 relay
+## 2. Ubuntu 服务器：安装并运行 relay
 
 ### 2.1 下载程序和 systemd 服务
 
-在本机登录 VPS：
+在本机登录服务器：
 
 ```bash
-ssh Volc-Engine-Test
+ssh relay-server
 ```
 
-下面命令在 VPS 终端执行。先把变量替换成自己的值；登录 SSH 后需要在 VPS 终端重新设置一次：
+下面命令在服务器终端执行。先把变量替换成自己的值；登录 SSH 后需要在服务器终端重新设置一次：
 
 ```bash
-VPS_IP=203.0.113.10
-DEVICE_ID=DESKTOP-KH8O1JM
+SERVER_IP=198.51.100.10
+DEVICE_ID=WIN-CLIENT-01
 ```
 
 下载 v0.3.0 的 Linux relay 和服务文件：
@@ -58,7 +58,7 @@ sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service \
   https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.3.0/examples/rust-ssh-relay.service
 ```
 
-如果 VPS 不能直接访问 GitHub，也可以在本机下载后，用 `scp` 上传到 VPS 当前目录，再执行：
+如果服务器不能直接访问 GitHub，也可以在本机下载后，用 `scp` 上传到服务器当前目录，再执行：
 
 ```bash
 sudo install -m 0755 rust-ssh-relay-linux-x86_64 /usr/local/bin/rust-ssh
@@ -84,10 +84,10 @@ sudo /usr/local/bin/rust-ssh keygen \
 
 | 文件 | 用途 | 是否能给别人 |
 | --- | --- | --- |
-| `/etc/rust-ssh/identity.key` | relay 的 Noise 私钥 | 不能，永远只留在 VPS |
+| `/etc/rust-ssh/identity.key` | relay 的 Noise 私钥 | 不能，永远只留在服务器 |
 | `/etc/rust-ssh/identity.pub` | 写入配置码，用来确认 relay 身份 | 可以通过配置码间接使用 |
 
-升级 relay 或重启 VPS 时保留这两个文件，不要再次运行 `keygen`。如果重新生成，旧配置码中的 server key 会不匹配。
+升级 relay 或重启服务器时保留这两个文件，不要再次运行 `keygen`。如果重新生成，旧配置码中的 server key 会不匹配。
 
 ### 2.3 创建 controller token 和设备 token
 
@@ -142,7 +142,7 @@ sudo ss -lntp | grep ':24443'
 sudo journalctl -u rust-ssh-relay -n 50 --no-pager
 ```
 
-云安全组和 VPS 防火墙只需要放行：
+云安全组和服务器防火墙只需要放行：
 
 ```text
 TCP 24443
@@ -156,7 +156,7 @@ TCP 24443
 
 ```bash
 sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$VPS_IP:24443" \
+  --server "$SERVER_IP:24443" \
   --server-key /etc/rust-ssh/identity.pub \
   --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
 ```
@@ -165,7 +165,7 @@ sudo /usr/local/bin/rust-ssh pair-code \
 
 ```bash
 sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$VPS_IP:24443" \
+  --server "$SERVER_IP:24443" \
   --server-key /etc/rust-ssh/identity.pub \
   --token-file /etc/rust-ssh/controller.token
 ```
@@ -216,10 +216,23 @@ rust-ssh-client-windows-x86_64.exe
 例如：
 
 ```text
-设备 ID：DESKTOP-KH8O1JM
-服务器文件：/etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
+设备 ID：WIN-CLIENT-01
+服务器文件：/etc/rust-ssh/devices/WIN-CLIENT-01.token
 本地 SSH：127.0.0.1:22
 ```
+
+### 3.3 设备 ID 从哪里来，能不能修改
+
+GUI 第一次打开时，设备 ID 默认读取 Windows 的 `COMPUTERNAME`；如果系统没有这个变量，会尝试 `HOSTNAME`，再没有就使用 `windows-agent`。它不是硬件序列号，也不是服务器自动分配的 ID，只是 relay 用来区分设备的稳定名称。
+
+可以修改。建议使用容易认出的唯一名称，例如 `WIN-CLIENT-01` 或 `OFFICE-PC`。修改时必须同时完成下面四步：
+
+1. 在服务器的 `/etc/rust-ssh/devices/` 下为新 ID 创建一个 token 文件；
+2. 用这个新 token 重新生成设备配置码；
+3. 在 client GUI 中同时改成新 ID，并粘贴新的设备配置码；
+4. 重启 relay，然后启动 client。
+
+只改 GUI 里的设备 ID、继续使用旧配置码，或者只改服务器文件名，都会认证失败。旧 token 文件可以在确认新 ID 上线后删除；删除后重启 relay，旧 ID 就不能重新注册。
 
 点击“保存”→“启动”。看到正在连接服务器后，让 client 窗口保持打开；关闭窗口，client 就会停止。
 
@@ -229,7 +242,7 @@ client 的 GUI 配置保存在：
 %APPDATA%\rust-ssh\client.json
 ```
 
-client 只主动连接 VPS，不监听公网端口，也不会因为 Windows 的 `sshd` 自动启动而自动启动。
+client 只主动连接服务器，不监听公网端口，也不会因为 Windows 的 `sshd` 自动启动而自动启动。
 
 ## 4. Mac / Windows：配置主控端 connect
 
@@ -261,7 +274,7 @@ chmod +x rust-ssh-connect-macos-aarch64
 | GUI 字段 | 填写内容 |
 | --- | --- |
 | 配置码 | 第 2.5 节生成的“主控配置码”整行内容 |
-| SSH 用户 | Windows 上实际使用的 OpenSSH 登录用户名，例如 `ame` |
+| SSH 用户 | Windows 上实际使用的 OpenSSH 登录用户名，例如 `windows-user` |
 
 点击“刷新设备”。如果 Windows client 已经启动，列表里会出现它的设备 ID。选择设备后点击“配置 SSH”，或直接点击“连接选中设备”。
 
@@ -281,13 +294,13 @@ macOS：~/.ssh/config
 Windows：%USERPROFILE%\.ssh\config
 ```
 
-设备 ID 为 `DESKTOP-KH8O1JM` 时，直接执行：
+设备 ID 为 `WIN-CLIENT-01` 时，直接执行：
 
 ```bash
-ssh rust-ssh-DESKTOP-KH8O1JM
+ssh rust-ssh-WIN-CLIENT-01
 ```
 
-也可以在 VS Code Remote-SSH 中选择 `rust-ssh-DESKTOP-KH8O1JM`。第一次连接时输入 Windows 账户的 SSH 密码或使用 Windows 上已配置的 SSH 密钥。
+也可以在 VS Code Remote-SSH 中选择 `rust-ssh-WIN-CLIENT-01`。第一次连接时输入 Windows 账户的 SSH 密码或使用 Windows 上已配置的 SSH 密钥。
 
 配置完成后，connect GUI 不需要一直打开；SSH 会调用 connect 的内部 proxy 模式。但是：
 
@@ -301,7 +314,7 @@ ssh rust-ssh-DESKTOP-KH8O1JM
 
 ### 添加设备
 
-在 VPS 上设置新设备 ID，例如 `LAPTOP-ABC123`：
+在服务器上设置新设备 ID，例如 `LAPTOP-ABC123`：
 
 ```bash
 NEW_DEVICE_ID=LAPTOP-ABC123
@@ -316,7 +329,7 @@ sudo systemctl restart rust-ssh-relay
 
 ```bash
 sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$VPS_IP:24443" \
+  --server "$SERVER_IP:24443" \
   --server-key /etc/rust-ssh/identity.pub \
   --token-file /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
 ```
@@ -328,7 +341,7 @@ sudo /usr/local/bin/rust-ssh pair-code \
 删除并重启 relay 后，该设备不能再次注册：
 
 ```bash
-sudo rm /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
+sudo rm /etc/rust-ssh/devices/WIN-CLIENT-01.token
 sudo systemctl restart rust-ssh-relay
 ```
 
@@ -339,11 +352,11 @@ sudo systemctl restart rust-ssh-relay
 ## 6. 认证和安全边界
 
 - relay 只对外监听一个 TCP 端口：默认 `24443`；client 和 connect 不监听公网端口。
-- Noise server key 用来确认连接的是正确的 VPS；不需要域名，也不需要 X.509 证书。
+- Noise server key 用来确认连接的是正确的服务器；不需要域名，也不需要 X.509 证书。
 - 每个设备 token 只绑定一个 `device_id`；某台设备 token 泄露，不能用来列出或连接其他设备。
 - controller token 是主控密钥，泄露后可以列出并连接所有在线设备；它不能分发给 client。
 - relay 会拒绝未知设备 ID、错误 token，并限制握手时间、连接数、帧大小和单设备并发会话。
-- 公网端口仍然可能被扫描；云安全组和 VPS 防火墙只开放 `24443/tcp`，并保持系统更新。
+- 公网端口仍然可能被扫描；云安全组和服务器防火墙只开放 `24443/tcp`，并保持系统更新。
 
 当前版本不包含 IP 限速、失败封禁、ACL、审计、token 热吊销和 BitLocker 等功能。
 
@@ -362,7 +375,7 @@ sudo journalctl -u rust-ssh-relay -n 100 --no-pager
 
 ### connect 中没有设备
 
-确认 Windows client 窗口仍然打开并显示正在运行；确认云安全组和 VPS 防火墙放行 `24443/tcp`；确认 connect 使用的是 controller 配置码，而不是某台设备配置码。
+确认 Windows client 窗口仍然打开并显示正在运行；确认云安全组和服务器防火墙放行 `24443/tcp`；确认 connect 使用的是 controller 配置码，而不是某台设备配置码。
 
 ### `device is not configured`
 
@@ -370,7 +383,7 @@ sudo journalctl -u rust-ssh-relay -n 100 --no-pager
 
 ### `public key mismatch`
 
-不要重新生成 identity key。使用当前 VPS 上的 `/etc/rust-ssh/identity.pub` 重新生成配置码。
+不要重新生成 identity key。使用当前服务器上的 `/etc/rust-ssh/identity.pub` 重新生成配置码。
 
 ### SSH 已连通但认证失败
 

@@ -8,7 +8,8 @@
 
 - 粘贴服务器生成的 `rssh1:` 配置码；
 - 这段配置码必须由该设备自己的 `<device_id>.token` 生成，不能使用 controller 配置码；
-- 设置设备 ID，默认本机主机名；
+- 设置设备 ID，默认本机主机名，也可以改成自己的唯一名称；
+- 修改设备 ID 时，必须在 relay 上创建同名的 `<device_id>.token`，并重新生成设备配置码；
 - 本地 SSH 默认 `127.0.0.1:22`；
 - 点击“启动”后在当前窗口进程内运行 agent；
 - 关闭窗口即停止 client，不自动安装开机自启。
@@ -32,16 +33,16 @@ Ubuntu relay 上执行：
 
 ```bash
 rust-ssh pair-code \
-  --server 203.0.113.10:24443 \
+  --server 198.51.100.10:24443 \
   --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/DESKTOP-KH8O1JM.token
+  --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
 ```
 
 把命令输出的整行内容只粘贴到对应的 client。connect 要另用 controller token 生成一段配置码：
 
 ```bash
 rust-ssh pair-code \
-  --server 203.0.113.10:24443 \
+  --server 198.51.100.10:24443 \
   --server-key /etc/rust-ssh/identity.pub \
   --token-file /etc/rust-ssh/controller.token
 ```

@@ -3,7 +3,7 @@
 这份手册把三端放在一起：
 
 ```text
-Ubuntu VPS：relay 服务器
+Ubuntu 服务器：relay
 Windows：client 被控端
 Mac / Windows：connect 主控端
 ```
@@ -12,31 +12,31 @@ Mac / Windows：connect 主控端
 
 ## 0. 先准备两个值
 
-先记下两个值，稍后登录 VPS 后再粘贴到终端：
+先记下两个值，稍后登录服务器后再粘贴到终端：
 
 ```text
-VPS 公网 IP：203.0.113.10
-设备 ID：DESKTOP-KH8O1JM
+服务器公网 IP：198.51.100.10
+设备 ID：WIN-CLIENT-01
 ```
 
-`Volc-Engine-Test` 只是你登录 VPS 的 SSH 别名；配置码里必须填写 VPS 公网 IP。
+`relay-server` 只是示例 SSH 别名；配置码里必须填写服务器公网 IP。
 
-## 1. 配置 Ubuntu VPS relay
+## 1. 配置 Ubuntu 服务器 relay
 
 在本机执行：
 
 ```bash
-ssh Volc-Engine-Test
+ssh relay-server
 ```
 
-登录 VPS 后，在 VPS 终端再设置一次下面两个变量：
+登录服务器后，在服务器终端再设置一次下面两个变量：
 
 ```bash
-VPS_IP=203.0.113.10
-DEVICE_ID=DESKTOP-KH8O1JM
+SERVER_IP=198.51.100.10
+DEVICE_ID=WIN-CLIENT-01
 ```
 
-从 [v0.3.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.3.0) 下载 relay，或在 VPS 上直接执行：
+从 GitHub 的 [v0.3.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.3.0) 下载 relay，或在服务器上直接执行：
 
 ```bash
 sudo curl -L --fail -o /usr/local/bin/rust-ssh \
@@ -83,20 +83,22 @@ sudo systemctl enable --now rust-ssh-relay
 sudo systemctl status rust-ssh-relay --no-pager
 ```
 
-云安全组和 VPS 防火墙只放行 `TCP 24443`。不要开放 Windows 的 `22` 端口；`24443` 也不要和 RustDesk 端口冲突。
+云安全组和服务器防火墙只放行 `TCP 24443`。不要开放 Windows 的 `22` 端口；`24443` 也不要和 RustDesk 端口冲突。
 
 ## 2. 配置 Windows client
 
-在 VPS 上为这台设备生成配置码：
+在服务器上为这台设备生成配置码：
 
 ```bash
 sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$VPS_IP:24443" \
+  --server "$SERVER_IP:24443" \
   --server-key /etc/rust-ssh/identity.pub \
   --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
 ```
 
 复制输出的整行 `rssh1:...`，只交给这台 Windows 设备。
+
+设备 ID 默认取 Windows 的计算机名，但不是固定硬件编号，可以自己修改。修改规则见详细手册；最重要的是它必须和服务器上的 token 文件名一致。
 
 在 Windows 管理员 PowerShell 中确认 OpenSSH Server：
 
@@ -125,11 +127,11 @@ Set-Service -Name sshd -StartupType Automatic
 
 ## 3. 配置 Mac / Windows connect
 
-在 VPS 上生成主控配置码：
+在服务器上生成主控配置码：
 
 ```bash
 sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$VPS_IP:24443" \
+  --server "$SERVER_IP:24443" \
   --server-key /etc/rust-ssh/identity.pub \
   --token-file /etc/rust-ssh/controller.token
 ```
@@ -158,14 +160,14 @@ chmod +x rust-ssh-connect-macos-aarch64
 以后可以直接：
 
 ```bash
-ssh rust-ssh-DESKTOP-KH8O1JM
+ssh rust-ssh-WIN-CLIENT-01
 ```
 
 也可以在 VS Code Remote-SSH 中选择同名主机。connect 配置一次后可以关闭，但 client 必须保持运行；不要移动 connect 可执行文件。
 
 ## 4. 记住这三件事
 
-- VPS 只暴露一个 `24443` 端口；client 和 connect 都只主动连接 VPS。
+- 服务器只暴露一个 `24443` 端口；client 和 connect 都只主动连接服务器。
 - `controller.token` 只有一份，所有主控端共用；它是全权限主控密钥，不能给 client。
 - 每台 Windows 设备各有一个 `<DEVICE_ID>.token`，泄露只影响那一台。
 
