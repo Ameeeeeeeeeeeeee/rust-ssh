@@ -511,8 +511,15 @@ impl Drop for ClientApp {
         if let Some(stop_tx) = self.stop_tx.take() {
             let _ = stop_tx.send(());
         }
+        // Do not wait indefinitely for a reconnecting agent during GUI
+        // shutdown. Dropping the handle detaches the worker; once eframe's
+        // main function returns, Windows tears down the remaining process
+        // threads. This prevents a stale client process from blocking MSI
+        // upgrades when the relay is unreachable.
         if let Some(thread) = self.agent_thread.take() {
-            let _ = thread.join();
+            if thread.is_finished() {
+                let _ = thread.join();
+            }
         }
     }
 }

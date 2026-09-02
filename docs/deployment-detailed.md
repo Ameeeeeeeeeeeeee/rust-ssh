@@ -24,7 +24,7 @@ Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu rust-ssh-server:244
 
 运行 GitHub Release 中的二进制不需要 Rust。只有从源码编译时才需要 Rust 和 Cargo。
 
-支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器临时不可用时持续自动重连。升级到该版本时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
+支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器临时不可用时持续自动重连；v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题。升级到 v0.5.x 时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
 
 ## 1. 准备服务器信息
 
@@ -300,7 +300,7 @@ chmod +x Rust-SSH-Connect-macos-aarch64
 
 Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。Connect 会常驻 Windows 右下角托盘，关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
 
-Client 和 Connect 都使用单实例锁，重复启动只会保留一个 GUI；Connect 的 SSH `ProxyCommand` 子进程不受此限制，因此多个 Terminal/VS Code 连接不会被拦截。升级 MSI 时安装器会先关闭旧程序。历史版本留下的旧任务栏固定图标可能需要手动取消固定一次，再固定新版本的开始菜单图标。
+Client 和 Connect 都使用单实例锁，重复启动只会保留一个 GUI；Connect 的 SSH `ProxyCommand` 子进程不受此限制，因此多个 Terminal/VS Code 连接不会被拦截。升级 MSI 时安装器会直接结束旧 GUI 进程，避免旧程序隐藏到托盘后阻塞覆盖安装；如果升级时已有 SSH 窗口，正在进行的会话会被中断。历史版本留下的旧任务栏固定图标可能需要手动取消固定一次，再固定新版本的开始菜单图标。
 
 主控端还需要系统 OpenSSH。检查：
 
