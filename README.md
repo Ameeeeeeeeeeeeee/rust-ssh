@@ -57,10 +57,7 @@ Hello wire 格式、Noise、控制帧格式和 bridge 未改变。
 每台 client 使用自己的设备 token 生成一段配置码；connect 使用 controller token 生成另一段配置码。配置码是秘密材料，不要提交到 GitHub、issue 或公共聊天中。
 
 ```bash
-rust-ssh pair-code \
-  --server 198.51.100.10:24443 \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
+rust-ssh pair-code --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
 ```
 
 ## Relay configuration
@@ -90,39 +87,25 @@ systemd 示例见 [`examples/rust-ssh-relay.service`](examples/rust-ssh-relay.se
 生成 server identity：
 
 ```bash
-rust-ssh keygen \
-  --identity-key /etc/rust-ssh/identity.key \
-  --public-key /etc/rust-ssh/identity.pub
+rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
 ```
 
 运行 relay：
 
 ```bash
-rust-ssh relay \
-  --listen 0.0.0.0:24443 \
-  --identity-key /etc/rust-ssh/identity.key \
-  --controller-token-file /etc/rust-ssh/controller.token \
-  --devices-dir /etc/rust-ssh/devices
+rust-ssh relay --listen 0.0.0.0:24443 --identity-key /etc/rust-ssh/identity.key --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
 ```
 
 运行 agent 时，`--token-file` 是该 `--device-id` 对应的设备 token：
 
 ```powershell
-rust-ssh.exe agent `
-  --server 198.51.100.10:24443 `
-  --server-key C:\ProgramData\rust-ssh\server-identity.pub `
-  --token-file C:\ProgramData\rust-ssh\WIN-CLIENT-01.token `
-  --device-id WIN-CLIENT-01 `
-  --target 127.0.0.1:22
+rust-ssh.exe agent --server 198.51.100.10:24443 --server-key C:\ProgramData\rust-ssh\server-identity.pub --token-file C:\ProgramData\rust-ssh\WIN-CLIENT-01.token --device-id WIN-CLIENT-01 --target 127.0.0.1:22
 ```
 
 运行 `list` 或 `controller` 时，`--token-file` 是 controller token：
 
 ```bash
-rust-ssh list \
-  --server 198.51.100.10:24443 \
-  --server-key ~/.config/rust-ssh/server-identity.pub \
-  --token-file ~/.config/rust-ssh/controller.token
+rust-ssh list --server 198.51.100.10:24443 --server-key ~/.config/rust-ssh/server-identity.pub --token-file ~/.config/rust-ssh/controller.token
 ```
 
 ## Build

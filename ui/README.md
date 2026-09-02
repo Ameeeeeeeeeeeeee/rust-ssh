@@ -8,7 +8,7 @@
 
 - 粘贴服务器生成的 `rssh1:` 配置码；
 - 这段配置码必须由该设备自己的 `<device_id>.token` 生成，不能使用 controller 配置码；
-- 设置设备 ID，默认本机主机名，也可以改成自己的唯一名称；
+- 设置设备 ID，默认 Windows 的计算机名，也可以改成自己的唯一名称；
 - 修改设备 ID 时，必须在 relay 上创建同名的 `<device_id>.token`，并重新生成设备配置码；
 - 本地 SSH 默认 `127.0.0.1:22`；
 - 点击“启动”后在当前窗口进程内运行 agent；
@@ -32,19 +32,13 @@ GUI 只负责配置和连接入口，真正的 SSH 认证和终端仍由系统 O
 Ubuntu relay 上执行：
 
 ```bash
-rust-ssh pair-code \
-  --server 198.51.100.10:24443 \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
+rust-ssh pair-code --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/WIN-CLIENT-01.token
 ```
 
 把命令输出的整行内容只粘贴到对应的 client。connect 要另用 controller token 生成一段配置码：
 
 ```bash
-rust-ssh pair-code \
-  --server 198.51.100.10:24443 \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/controller.token
+rust-ssh pair-code --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
 ```
 
 配置码包含 relay IP、server 公钥和 token，应当按秘密材料保存；server 私钥不会进入配置码。controller token 绝不能分发给 agent。

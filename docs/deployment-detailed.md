@@ -31,6 +31,24 @@ Windows client ──主动连接──> Ubuntu 服务器:24443 <──主动连
 
 `relay-server` 只是本机 SSH 配置里的示例登录别名，不能放进 rust-ssh 配置码；配置码必须使用服务器公网 IP 和 `24443` 端口。
 
+### 1.1 获取或自定义设备 ID
+
+在 Windows 被控机打开 PowerShell，执行：
+
+```powershell
+$env:COMPUTERNAME
+```
+
+输出的计算机名就是 rust-ssh client 默认填入的设备 ID。它不是硬件序列号，也不是服务器自动分配的值。你可以直接在 client GUI 的“设备 ID”输入框中改成自己的名称，例如 `WIN-CLIENT-01`、`OFFICE-PC`。
+
+自定义时只需满足三条：
+
+- 每台 Windows 设备使用不同的 ID；
+- 只使用字母、数字、`.`、`_`、`-`；
+- 服务器上的 token 文件名必须是 `/etc/rust-ssh/devices/<设备ID>.token`。
+
+如果 client 已经保存过配置，改 Windows 计算机名不会自动改掉 rust-ssh 里的旧 ID；请在 GUI 里手动修改，并按第 3.3 节重新生成配置码。
+
 ## 2. Ubuntu 服务器：安装并运行 relay
 
 ### 2.1 下载程序和 systemd 服务
@@ -41,21 +59,23 @@ Windows client ──主动连接──> Ubuntu 服务器:24443 <──主动连
 ssh relay-server
 ```
 
-下面命令在服务器终端执行。先把变量替换成自己的值；登录 SSH 后需要在服务器终端重新设置一次：
+下面命令在服务器终端执行。请把这四行直接复制执行，只修改前两行的值：
 
 ```bash
 SERVER_IP=198.51.100.10
 DEVICE_ID=WIN-CLIENT-01
+export SERVER_IP DEVICE_ID
+printf '服务器=%s:24443\n设备ID=%s\n' "$SERVER_IP" "$DEVICE_ID"
 ```
+
+这些变量只在当前 SSH 终端里有效；重新登录服务器后，需要再次执行。后面的命令请在同一个终端继续执行。
 
 下载 v0.3.0 的 Linux relay 和服务文件：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh \
-  https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.3.0/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.3.0/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service \
-  https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.3.0/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.3.0/examples/rust-ssh-relay.service
 ```
 
 如果服务器不能直接访问 GitHub，也可以在本机下载后，用 `scp` 上传到服务器当前目录，再执行：
@@ -75,9 +95,7 @@ sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh /etc/rust-ssh/devices
 第一次部署时生成身份密钥：
 
 ```bash
-sudo /usr/local/bin/rust-ssh keygen \
-  --identity-key /etc/rust-ssh/identity.key \
-  --public-key /etc/rust-ssh/identity.pub
+sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
 ```
 
 这两个文件的含义：
@@ -99,24 +117,15 @@ v0.3.0 有两种 token：
 只在文件不存在时生成，避免让已经发出的配置码失效：
 
 ```bash
-sudo test -e /etc/rust-ssh/controller.token || \
-  (openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null)
-sudo test -e /etc/rust-ssh/devices/$DEVICE_ID.token || \
-  (openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/$DEVICE_ID.token >/dev/null)
+sudo test -e /etc/rust-ssh/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null)
+sudo test -e /etc/rust-ssh/devices/$DEVICE_ID.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/$DEVICE_ID.token >/dev/null)
 ```
 
 设置 relay 服务读取这些文件所需的权限：
 
 ```bash
-sudo chown root:rustssh \
-  /etc/rust-ssh/identity.key \
-  /etc/rust-ssh/identity.pub \
-  /etc/rust-ssh/controller.token \
-  /etc/rust-ssh/devices/$DEVICE_ID.token
-sudo chmod 0640 \
-  /etc/rust-ssh/identity.key \
-  /etc/rust-ssh/controller.token \
-  /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
 sudo chmod 0644 /etc/rust-ssh/identity.pub
 ```
 
@@ -155,19 +164,13 @@ TCP 24443
 设备配置码给 Windows client：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$SERVER_IP:24443" \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
 ```
 
 主控配置码给 Mac/Windows connect：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$SERVER_IP:24443" \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/controller.token
+sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
 ```
 
 两个命令都会输出一整行 `rssh1:...`：
@@ -318,8 +321,7 @@ ssh rust-ssh-WIN-CLIENT-01
 
 ```bash
 NEW_DEVICE_ID=LAPTOP-ABC123
-sudo test -e /etc/rust-ssh/devices/$NEW_DEVICE_ID.token || \
-  (openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/$NEW_DEVICE_ID.token >/dev/null)
+sudo test -e /etc/rust-ssh/devices/$NEW_DEVICE_ID.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/devices/$NEW_DEVICE_ID.token >/dev/null)
 sudo chown root:rustssh /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
 sudo chmod 0640 /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
 sudo systemctl restart rust-ssh-relay
@@ -328,10 +330,7 @@ sudo systemctl restart rust-ssh-relay
 生成这个设备自己的配置码：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$SERVER_IP:24443" \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
+sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/$NEW_DEVICE_ID.token
 ```
 
 把新配置码交给对应的 Windows client。所有 connect 仍然使用同一份 controller 配置码。

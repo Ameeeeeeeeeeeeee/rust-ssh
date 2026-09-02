@@ -12,7 +12,7 @@ Mac / Windows：connect 主控端
 
 ## 0. 先准备两个值
 
-先记下两个值，稍后登录服务器后再粘贴到终端：
+先准备两个值，稍后登录服务器后会用到：
 
 ```text
 服务器公网 IP：198.51.100.10
@@ -20,6 +20,14 @@ Mac / Windows：connect 主控端
 ```
 
 `relay-server` 只是示例 SSH 别名；配置码里必须填写服务器公网 IP。
+
+设备 ID 不需要去服务器查。在 Windows 被控机打开 PowerShell，执行：
+
+```powershell
+$env:COMPUTERNAME
+```
+
+输出的计算机名就是 client 默认使用的设备 ID。你也可以在 client 窗口里直接改成自己的名称，例如 `WIN-CLIENT-01`；只要每台设备不同，并且只使用字母、数字、`.`、`_`、`-` 即可。
 
 ## 1. 配置 Ubuntu 服务器 relay
 
@@ -29,21 +37,23 @@ Mac / Windows：connect 主控端
 ssh relay-server
 ```
 
-登录服务器后，在服务器终端再设置一次下面两个变量：
+登录服务器后，把下面四行作为命令直接复制到 Ubuntu 终端执行。只改前两行的值：
 
 ```bash
 SERVER_IP=198.51.100.10
 DEVICE_ID=WIN-CLIENT-01
+export SERVER_IP DEVICE_ID
+printf '服务器=%s:24443\n设备ID=%s\n' "$SERVER_IP" "$DEVICE_ID"
 ```
+
+如果关闭 SSH 窗口后重新登录，需要再次执行这四行。后面的命令请在同一个窗口继续执行。
 
 从 GitHub 的 [v0.3.0 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.3.0) 下载 relay，或在服务器上直接执行：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh \
-  https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.3.0/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.3.0/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service \
-  https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.3.0/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.3.0/examples/rust-ssh-relay.service
 ```
 
 创建目录和 token：
@@ -53,9 +63,7 @@ sudo useradd --system --no-create-home --shell /usr/sbin/nologin rustssh 2>/dev/
 sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh /etc/rust-ssh/devices
 
 # identity 文件只在第一次部署时生成；已有文件不要重生成
-sudo /usr/local/bin/rust-ssh keygen \
-  --identity-key /etc/rust-ssh/identity.key \
-  --public-key /etc/rust-ssh/identity.pub
+sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
 
 # 每条只在文件不存在时生成，避免让旧配置码失效
 sudo test -e /etc/rust-ssh/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null)
@@ -65,10 +73,8 @@ sudo test -e /etc/rust-ssh/devices/$DEVICE_ID.token || (openssl rand -hex 32 | s
 设置配置和权限：
 
 ```bash
-sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub \
-  /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
-sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token \
-  /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token /etc/rust-ssh/devices/$DEVICE_ID.token
 sudo chmod 0644 /etc/rust-ssh/identity.pub
 
 sudo tee /etc/rust-ssh/relay.env >/dev/null <<'EOF'
@@ -90,10 +96,7 @@ sudo systemctl status rust-ssh-relay --no-pager
 在服务器上为这台设备生成配置码：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$SERVER_IP:24443" \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
+sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/devices/$DEVICE_ID.token
 ```
 
 复制输出的整行 `rssh1:...`，只交给这台 Windows 设备。
@@ -130,10 +133,7 @@ Set-Service -Name sshd -StartupType Automatic
 在服务器上生成主控配置码：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code \
-  --server "$SERVER_IP:24443" \
-  --server-key /etc/rust-ssh/identity.pub \
-  --token-file /etc/rust-ssh/controller.token
+sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
 ```
 
 这段配置码可以查看和连接所有设备，只交给可信的主控端，绝不要交给 client。

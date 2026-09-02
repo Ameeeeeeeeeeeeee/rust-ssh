@@ -159,6 +159,7 @@ impl eframe::App for ClientApp {
                 "从服务器为这台设备的 token 生成 pair-code 后复制整段内容",
             );
             text_field(ui, "设备 ID", &mut self.settings.device_id);
+            ui.small("默认使用 Windows 计算机名；可以修改，但必须与服务器上的设备 token 文件名一致。");
             text_field(ui, "本地 SSH", &mut self.settings.target);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
