@@ -180,7 +180,7 @@ ssh rssh-0123456789abcdef0123456789abcdef
 
 如果想改昵称，在设备列表中右键设备，选择“设置 Host 昵称”，保存后重新点击“配置 SSH”。以后直接执行 `ssh 你设置的昵称` 即可；SSH 配置中的 ProxyCommand 是内部实现，不需要手写。
 
-connect 只负责生成 SSH 配置和启动内部代理；Windows 下可以关闭窗口隐藏到托盘，之后仍可直接使用 `ssh Host` 或 VS Code。Windows client 也必须保持托盘运行并显示绿色已连接状态。
+connect 只负责生成 SSH 配置和启动内部代理；Windows 下可以关闭窗口隐藏到托盘，之后仍可直接使用 `ssh Host` 或 VS Code。Windows client 也必须保持托盘运行并显示绿色已连接状态。Client 遇到网络或服务器临时断开时会持续自动重连，不会因为一次连接失败退出；只有在托盘菜单中选择“关闭”才会停止。
 
 ## 5. 只要记住这四点
 

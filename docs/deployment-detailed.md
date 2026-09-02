@@ -24,7 +24,7 @@ Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu rust-ssh-server:244
 
 运行 GitHub Release 中的二进制不需要 Rust。只有从源码编译时才需要 Rust 和 Cargo。
 
-支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。升级到该版本时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
+支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器临时不可用时持续自动重连。升级到该版本时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
 
 ## 1. 准备服务器信息
 

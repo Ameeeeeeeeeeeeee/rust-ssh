@@ -49,7 +49,7 @@ relay 启动时读取：
 - 如果热加载时发现文件暂时不存在或内容无效，relay 会保留上一份有效配置，避免半写入文件导致服务失效；已建立的连接不会被强制断开；
 - v0.4 起，client 首次启动时生成 `rssh-` 开头的随机设备 ID，并保存在本机配置中；它与 Windows 计算机名无关，也不会因修改计算机名而改变。
 
-Noise 和现有配置码格式保持不变；v0.4.7 新增了 agent session 通道，让一个 client 的控制连接和多个 SSH 数据连接分离。升级 v0.4.7 时，server、client、connect 三端需要一起升级；旧版程序不能与新协议互通。
+Noise 和现有配置码格式保持不变；v0.5.0 包含 agent session 通道，让一个 client 的控制连接和多个 SSH 数据连接分离，并让 Client 在网络或服务器暂时不可用时持续自动重连。升级 v0.5.0 时，server、client、connect 三端需要一起升级；旧版程序不能与新协议互通。
 
 ## Pairing codes
 

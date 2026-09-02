@@ -10,6 +10,9 @@ use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone)]
 pub enum Status {
     Connecting,
@@ -74,7 +77,10 @@ async fn run_until_stopped_inner(
         report_status(&status, Status::Failed(error.to_string()));
         return Err(error);
     }
-    let mut delay = Duration::from_secs(1);
+    // Network and relay failures are retryable indefinitely while the stop
+    // channel remains open. Backoff prevents a disconnected client from
+    // hammering the server, while an established connection retries quickly.
+    let mut delay = INITIAL_RECONNECT_DELAY;
     loop {
         report_status(&status, Status::Connecting);
         let mut connected = false;
@@ -97,7 +103,7 @@ async fn run_until_stopped_inner(
         }
 
         let retry_delay = if connected {
-            Duration::from_secs(1)
+            INITIAL_RECONNECT_DELAY
         } else {
             delay
         };
@@ -108,11 +114,15 @@ async fn run_until_stopped_inner(
                 return Ok(());
             },
         }
-        delay = if connected {
-            Duration::from_secs(1)
-        } else {
-            std::cmp::min(delay.saturating_mul(2), Duration::from_secs(30))
-        };
+        delay = next_reconnect_delay(delay, connected);
+    }
+}
+
+fn next_reconnect_delay(current: Duration, was_connected: bool) -> Duration {
+    if was_connected {
+        INITIAL_RECONNECT_DELAY
+    } else {
+        std::cmp::min(current.saturating_mul(2), MAX_RECONNECT_DELAY)
     }
 }
 
@@ -241,5 +251,44 @@ where
     match read_frame(stream).await? {
         Message::HelloOk => Ok(()),
         other => Err(anyhow!("relay did not accept hello: {other:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_reconnect_delay, INITIAL_RECONNECT_DELAY, MAX_RECONNECT_DELAY};
+    use std::time::Duration;
+
+    #[test]
+    fn reconnect_backoff_is_bounded_but_never_stops() {
+        let mut delay = INITIAL_RECONNECT_DELAY;
+        let mut delays = Vec::new();
+        for _ in 0..8 {
+            delays.push(delay);
+            delay = next_reconnect_delay(delay, false);
+        }
+
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(4),
+                Duration::from_secs(8),
+                Duration::from_secs(16),
+                Duration::from_secs(30),
+                Duration::from_secs(30),
+                Duration::from_secs(30),
+            ]
+        );
+        assert_eq!(delay, MAX_RECONNECT_DELAY);
+    }
+
+    #[test]
+    fn established_connection_reconnects_with_initial_delay() {
+        assert_eq!(
+            next_reconnect_delay(Duration::from_secs(30), true),
+            INITIAL_RECONNECT_DELAY
+        );
     }
 }
