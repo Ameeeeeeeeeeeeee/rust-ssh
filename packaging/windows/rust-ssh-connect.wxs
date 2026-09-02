@@ -2,10 +2,12 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Rust-SSH-Connect" Manufacturer="Rust-SSH" Version="$(var.ProductVersion)" Scope="perMachine" UpgradeCode="A5C7A43D-8198-47C4-8C29-0F36F519A8E2">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Rust-SSH-Connect is already installed." />
-    <util:CloseApplication Id="CloseRustSshConnect" Target="rust-ssh-connect.exe" CloseMessage="no" TerminateProcess="1" RebootPrompt="no" Timeout="1" />
+    <util:CloseApplication Id="CloseRustSshConnect" Target="rust-ssh-connect.exe" Description="Rust-SSH-Connect 正在运行。选择“忽略”将强制关闭它并继续安装；选择“重试”可在手动关闭后再次检查；选择“中止”取消安装。" Property="RUST_SSH_CONNECT_RUNNING" CloseMessage="no" PromptToContinue="yes" TerminateProcess="1" RebootPrompt="no" Timeout="1" />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="RustSshIcon" SourceFile="$(var.IconPath)" />
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <CustomAction Id="KillRustSshConnectBeforeValidation" BinaryRef="Wix4UtilCA_X64" DllEntry="WixSilentExec" Execute="immediate" Return="ignore" />
+    <SetProperty Id="WixSilentExecCmdLine" Value="&quot;[System64Folder]taskkill.exe&quot; /F /T /IM rust-ssh-connect.exe" Before="KillRustSshConnectBeforeValidation" Sequence="execute" />
     <Feature Id="MainFeature" Title="Rust-SSH-Connect" Level="1">
       <ComponentRef Id="ConnectExecutable" />
       <ComponentRef Id="ConnectData" />
@@ -14,6 +16,11 @@
   </Package>
 
   <Fragment>
+    <InstallExecuteSequence>
+      <Custom Action="override Wix4CloseApplications_X64" Before="KillRustSshConnectBeforeValidation" />
+      <Custom Action="KillRustSshConnectBeforeValidation" Condition="RUST_SSH_CONNECT_RUNNING" Before="InstallValidate" />
+    </InstallExecuteSequence>
+
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Connect">
         <Directory Id="DataFolder" Name="data" />
