@@ -1,4 +1,4 @@
-# rust-ssh 三端部署：详细版
+# Rust-SSH 三端部署：详细版
 
 这份手册把服务器、Windows 被控端和 Mac/Windows 主控端放在一个流程里。请按顺序操作。
 
@@ -6,14 +6,14 @@
 
 | 端 | 系统 | 程序 | 作用 |
 | --- | --- | --- | --- |
-| 服务器 | Ubuntu | `rust-ssh relay` | 保存密钥和 token，负责中继 |
-| 被控端 | Windows x86-64 | `rust-ssh-client` | 主动连接服务器，并把 SSH 转给本机 |
-| 主控端 | macOS ARM64 或 Windows x86-64 | `rust-ssh-connect` | 查看在线设备，并发起 SSH |
+| 服务器 | Ubuntu | `Rust-SSH-Server`（命令仍为 `rust-ssh relay`） | 保存密钥和 token，负责中继 |
+| 被控端 | Windows x86-64 | `Rust-SSH-Client`（技术二进制名仍为 `rust-ssh-client`） | 主动连接服务器，并把 SSH 转给本机 |
+| 主控端 | macOS ARM64 或 Windows x86-64 | `Rust-SSH-Connect`（技术二进制名仍为 `rust-ssh-connect`） | 查看在线设备，并发起 SSH |
 
 网络方向只有两条主动连接：
 
 ```text
-Windows client ──主动 TCP/Noise──> Ubuntu 服务器:24443 <──主动 TCP/Noise── Mac/Windows connect
+Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu Rust-SSH-Server:24443 <──主动 TCP/Noise── Mac/Windows Rust-SSH-Connect
        │                                                               │
        └──本机 127.0.0.1:22                                           └──本机 SSH / VS Code
 ```
@@ -54,10 +54,10 @@ export SERVER_IP
 ssh relay-server
 ```
 
-下载最新正式版 relay 和 systemd 服务文件：
+下载最新正式版 Rust-SSH-Server 和 systemd 服务文件：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/Rust-SSH-Server-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
 sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-relay.service
 ```
@@ -65,7 +65,7 @@ sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.gi
 如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
 
 ```bash
-sudo install -m 0755 rust-ssh-relay-linux-x86_64 /usr/local/bin/rust-ssh
+sudo install -m 0755 Rust-SSH-Server-linux-x86_64 /usr/local/bin/rust-ssh
 sudo install -m 0644 rust-ssh-relay.service /etc/systemd/system/rust-ssh-relay.service
 ```
 
@@ -169,10 +169,10 @@ sudo ufw allow 24443/tcp
 从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载并安装 MSI：
 
 ```text
-rust-ssh-client-windows-x86_64.msi
+Rust-SSH-Client-windows-x86_64.msi
 ```
 
-Release 不提供单独的 Windows `.exe`。MSI 会显示安装向导，允许选择安装目录并创建开始菜单入口；以后安装更高版本 MSI 可以覆盖升级。client 自己的配置会保存在所选安装目录下的 `data` 文件夹中；升级时保持相同安装目录即可保留配置。
+Release 不提供单独的 Windows `.exe`。MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client`，也可以选择其他安装目录；它会创建开始菜单入口。以后安装更高版本 MSI 可以覆盖升级。Rust-SSH-Client 的配置会保存在所选安装目录下的 `data` 文件夹中；安装器只给 `data` 文件夹写权限，程序本体仍受 `Program Files` 保护。
 
 第一次打开时，client GUI 会显示类似下面的设备 ID：
 
@@ -209,7 +209,7 @@ Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
 ```
 
-这里设置自动启动的是 Windows 自带的 OpenSSH Server，不是 rust-ssh client。按当前设计，client 不自动开机启动；需要使用时手动打开即可。
+这里设置自动启动的是 Windows 自带的 OpenSSH Server，不是 Rust-SSH-Client。按当前设计，Rust-SSH-Client 不自动开机启动；需要使用时手动打开即可。
 
 ### 3.3 在服务器登记设备
 
@@ -281,20 +281,20 @@ controller 只有一个 token 文件，但可以有多个 connect 实例使用�
 
 ### 4.2 下载并打开 connect
 
-从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载：
+从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载 Rust-SSH-Connect：
 
 ```text
-macOS Apple Silicon：rust-ssh-connect-macos-aarch64
-Windows x86-64：rust-ssh-connect-windows-x86_64.msi
+macOS Apple Silicon：Rust-SSH-Connect-macos-aarch64
+Windows x86-64：Rust-SSH-Connect-windows-x86_64.msi
 ```
 
 Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装 Rust。macOS 下载后如没有执行权限，执行：
 
 ```bash
-chmod +x rust-ssh-connect-macos-aarch64
+chmod +x Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 rust-ssh connect。connect 自己的配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
 
 主控端还需要系统 OpenSSH。检查：
 
@@ -357,19 +357,21 @@ ssh rssh-0123456789abcdef0123456789abcdef
 ### 5.2 Windows client
 
 ```text
-<client安装目录>\data\client.json
+C:\Program Files\Rust-SSH-Client\data\client.json
 ```
 
-其中保存设备 ID、设备配置码和本地 SSH 目标。设备配置码包含设备 token，应当按秘密材料保护。
+也可以是安装向导中选择的其他目录。安装器只给 `data` 文件夹写权限，程序本体仍受 `Program Files` 保护。其中保存设备 ID、设备配置码和本地 SSH 目标。设备配置码包含设备 token，应当按秘密材料保护。
+
+注意：为了让普通用户在 `Program Files` 安装位置下保存配置，安装器会给 `data` 文件夹授予本机 `Users` 组读写权限。单用户个人电脑通常没有问题；如果多个人共用这台 Windows 电脑，本机其他用户可能读取该目录中的设备配置码。
 
 ### 5.3 Mac / Windows connect
 
 ```text
 macOS：~/.config/rust-ssh/connect.json
-Windows：<connect安装目录>\data\connect.json
+Windows：C:\Program Files\Rust-SSH-Connect\data\connect.json
 ```
 
-其中保存 controller 配置码。它的权限等同于 controller token，不要复制给 client。
+Windows 也可以是安装向导中选择的其他目录。安装器只给 `data` 文件夹写权限。其中保存 controller 配置码。它的权限等同于 controller token，不要复制给 client。
 
 ## 6. 添加第二台或更多 Windows client
 
@@ -434,7 +436,7 @@ sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD
 sudo systemctl restart rust-ssh-relay
 ```
 
-旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows client/connect 使用 MSI；新版本首次启动时会把旧版 `%APPDATA%\rust-ssh` 中的配置迁移到当前安装目录的 `data` 文件夹。
+旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows Rust-SSH-Client/Rust-SSH-Connect 使用 MSI；新版本首次启动时会把旧版 `%APPDATA%\rust-ssh` 或旧 MSI 的默认 `LocalAppData` 配置迁移到当前安装目录的 `data` 文件夹。
 
 ### 7.4 替换 controller token
 
@@ -448,6 +450,25 @@ sudo chmod 0640 /etc/rust-ssh/controller.token
 ```
 
 然后按第 4.1 节重新生成 controller 配置码，等待约 2 秒让 relay 热加载。旧 controller 配置码会失效；已经建立的 SSH 会话不会被强制断开。
+
+### 7.5 清理旧版 Windows 文件
+
+v0.4.4 起，Windows 默认安装目录是：
+
+```text
+C:\Program Files\Rust-SSH-Client
+C:\Program Files\Rust-SSH-Connect
+```
+
+先打开新版本一次，确认设备 ID、配置码和 SSH 连接都正常，再清理旧内容：
+
+1. 如果旧 client 仍在运行，先在任务管理器结束旧的 `rust-ssh-client.exe`；
+2. 在“设置 → 应用 → 已安装的应用”中卸载旧的 `rust-ssh client`、`rust-ssh connect` 或失败安装留下的同名条目；
+3. 确认新安装目录下的 `data` 已保留后，才删除旧目录：`C:\Program Files\rust-ssh`、`%LOCALAPPDATA%\rust-ssh-client`、`%LOCALAPPDATA%\rust-ssh-connect`；不要删除 `C:\Program Files\Rust-SSH-Client` 或 `C:\Program Files\Rust-SSH-Connect`，它们是新版本的目录；
+4. `%APPDATA%\rust-ssh` 里的旧配置确认已迁移后再删除；如果不确定，先保留它；
+5. 不要删除 `%USERPROFILE%\.ssh\config` 整个文件。若要清理旧 SSH 条目，只删除 `# >>> rust-ssh managed begin >>>` 到 `# <<< rust-ssh managed end <<<` 之间的区块，其他 SSH 配置要保留。
+
+如果安装器显示 `C:\Program Files\rust-ssh-client`，这和 `C:\Program Files\Rust-SSH-Client` 是同一个 Windows 路径（Windows 不区分大小写）；v0.4.4 会通过管理员权限正常使用它。v0.4.3 是一次性的旧“当前用户安装”版本；若 Windows 不自动升级它，卸载旧 v0.4.3 后再安装 v0.4.4 即可，配置文件不会因为卸载而被程序主动删除。
 
 ## 8. server 和 client 各自暴露什么
 

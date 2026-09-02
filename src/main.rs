@@ -6,7 +6,11 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
-#[command(name = "rust-ssh", version, about = "SSH over a Noise-encrypted relay")]
+#[command(
+    name = "Rust-SSH-Server",
+    version,
+    about = "Rust-SSH-Server: SSH over a Noise-encrypted relay"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

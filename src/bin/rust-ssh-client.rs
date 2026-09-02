@@ -10,7 +10,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "rust-ssh client",
+        "Rust-SSH-Client",
         options,
         Box::new(|creation_context| {
             Ok(Box::new(rust_ssh::desktop::ClientApp::new(

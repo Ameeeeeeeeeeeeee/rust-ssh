@@ -15,13 +15,15 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            name: relay-linux-x86_64
+            name: server-linux-x86_64
+            asset: Rust-SSH-Server-linux-x86_64
             target: x86_64-unknown-linux-gnu
             binary: rust-ssh
             extension: ""
             features: ""
           - os: macos-14
             name: connect-macos-aarch64
+            asset: Rust-SSH-Connect-macos-aarch64
             target: aarch64-apple-darwin
             binary: rust-ssh-connect
             extension: ""
@@ -38,7 +40,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}${{ matrix.extension }}" "dist/rust-ssh-${{ matrix.name }}${{ matrix.extension }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}${{ matrix.extension }}" "dist/${{ matrix.asset }}${{ matrix.extension }}"
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ssh-${{ matrix.name }}
@@ -52,11 +54,11 @@ jobs:
           - name: client-windows-x86_64
             binary: rust-ssh-client
             wxs: rust-ssh-client.wxs
-            output: rust-ssh-client-windows-x86_64.msi
+            output: Rust-SSH-Client-windows-x86_64.msi
           - name: connect-windows-x86_64
             binary: rust-ssh-connect
             wxs: rust-ssh-connect.wxs
-            output: rust-ssh-connect-windows-x86_64.msi
+            output: Rust-SSH-Connect-windows-x86_64.msi
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +73,7 @@ jobs:
         run: |
           dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" --version 5.0.2 wix
           & "$env:RUNNER_TEMP\wix\wix.exe" extension add WixToolset.UI.wixext/5.0.2
+          & "$env:RUNNER_TEMP\wix\wix.exe" extension add WixToolset.Util.wixext/5.0.2
       - name: Build MSI
         shell: pwsh
         run: |
@@ -78,7 +81,7 @@ jobs:
           $binaryPath = (Resolve-Path "target\x86_64-pc-windows-msvc\release\${{ matrix.binary }}.exe").Path
           $iconPath = (Resolve-Path "packaging\windows\rust-ssh.ico").Path
           New-Item -ItemType Directory -Force dist | Out-Null
-          & "$env:RUNNER_TEMP\wix\wix.exe" build -arch x64 -culture zh-CN -ext WixToolset.UI.wixext -d "ProductVersion=$version" -d "BinaryPath=$binaryPath" -d "IconPath=$iconPath" "packaging\windows\${{ matrix.wxs }}" -out "dist\${{ matrix.output }}"
+          & "$env:RUNNER_TEMP\wix\wix.exe" build -arch x64 -culture zh-CN -culture en-US -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -d "ProductVersion=$version" -d "BinaryPath=$binaryPath" -d "IconPath=$iconPath" "packaging\windows\${{ matrix.wxs }}" -out "dist\${{ matrix.output }}"
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ssh-${{ matrix.name }}-msi

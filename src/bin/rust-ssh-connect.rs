@@ -13,7 +13,7 @@ use tokio::runtime::Runtime;
 
 #[cfg(feature = "desktop")]
 #[derive(Debug, Parser)]
-#[command(name = "rust-ssh-connect")]
+#[command(name = "Rust-SSH-Connect")]
 struct ProxyArgs {
     /// Internal stdin/stdout mode used by OpenSSH ProxyCommand.
     #[arg(long)]
@@ -84,7 +84,7 @@ fn run() -> Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "rust-ssh connect",
+        "Rust-SSH-Connect",
         options,
         Box::new(|creation_context| {
             Ok(Box::new(rust_ssh::desktop::ConnectApp::new(
@@ -92,7 +92,7 @@ fn run() -> Result<()> {
             )))
         }),
     )
-    .map_err(|error| anyhow!("运行 rust-ssh connect GUI: {error:?}"))
+    .map_err(|error| anyhow!("运行 Rust-SSH-Connect GUI: {error:?}"))
 }
 
 #[cfg(not(feature = "desktop"))]

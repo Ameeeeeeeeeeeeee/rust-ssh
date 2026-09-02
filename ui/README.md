@@ -1,15 +1,15 @@
-# rust-ssh 桌面前端
+# Rust-SSH 桌面前端
 
 桌面前端是可选的原生 Rust/egui 应用，不需要 Node.js、Tauri 或额外运行时。运行 Release 二进制不需要安装 Rust；GUI 会使用系统中文字体作为 fallback。
 
 ## client
 
-`rust-ssh-client` 面向 Windows x86-64 被控端：
+`Rust-SSH-Client`（技术二进制名仍为 `rust-ssh-client`）面向 Windows x86-64 被控端：
 
 - 第一次打开时随机生成 `rssh-...` 设备 ID，并在 UI 中显示；
 - 点击“复制”把设备 ID交给服务器管理员；
 - 服务器执行 `device add` 后，粘贴返回的设备配置码；
-- Windows MSI 安装后的设备 ID 保存在安装目录下的 `data\client.json`，与 Windows 计算机名无关；旧版 `%APPDATA%\rust-ssh` 配置会在首次启动时迁移；
+- Windows MSI 安装后的设备 ID 保存在安装目录下的 `data\client.json`，默认目录为 `C:\Program Files\Rust-SSH-Client`，与 Windows 计算机名无关；旧版 `%APPDATA%\rust-ssh` 和旧 MSI 的 LocalAppData 配置会在首次启动时迁移；
 - 本地 SSH 默认 `127.0.0.1:22`；
 - 点击“启动”后在当前窗口进程内运行 agent；
 - 关闭窗口只隐藏到托盘；右键托盘菜单中的“关闭”才会停止 client，不自动安装开机自启。
@@ -18,7 +18,7 @@
 
 ## connect
 
-`rust-ssh-connect` 面向 Windows x86-64 和 macOS ARM64 主控端：
+`Rust-SSH-Connect`（技术二进制名仍为 `rust-ssh-connect`）面向 Windows x86-64 和 macOS ARM64 主控端：
 
 - 粘贴由服务器 controller token 生成的配置码并填写 SSH 用户名；
 - 自动刷新 relay 上的在线设备；
@@ -26,7 +26,7 @@
 - 点击“连接选中设备”后打开系统 Terminal/cmd；
 - 生成的 `rust-ssh-设备ID` 可供 Terminal 和 VS Code Remote-SSH 使用。
 
-Windows MSI 会显示安装向导并允许选择安装目录。Windows client/connect 的自身配置、配置码和设备 ID 都放在各自安装目录下的 `data` 文件夹；系统 SSH 配置仍位于 `%USERPROFILE%\.ssh\config`，这是 OpenSSH 和 VS Code 默认读取的位置。
+Windows MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client` 或 `C:\Program Files\Rust-SSH-Connect`，也允许选择其他安装目录。自身配置、配置码和设备 ID 都放在各自安装目录下的 `data` 文件夹；安装器只给 `data` 写权限，系统 SSH 配置仍位于 `%USERPROFILE%\.ssh\config`，这是 OpenSSH 和 VS Code 默认读取的位置。
 
 GUI 只负责配置和连接入口，真正的 SSH 认证和终端仍由系统 OpenSSH 提供。
 

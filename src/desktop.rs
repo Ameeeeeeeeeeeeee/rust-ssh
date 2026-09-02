@@ -73,7 +73,7 @@ impl ClientTray {
         let icon = tray_icon_for_state(ClientConnectionState::Stopped)?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("rust-ssh client")
+            .with_tooltip("Rust-SSH-Client")
             .with_menu_on_left_click(false)
             .with_menu_on_right_click(true)
             .with_icon(icon)
@@ -87,11 +87,11 @@ impl ClientTray {
             let _ = self.icon.set_icon(Some(icon));
         }
         let tooltip = match state {
-            ClientConnectionState::Stopped => "rust-ssh client：未运行",
-            ClientConnectionState::Connecting => "rust-ssh client：正在连接",
-            ClientConnectionState::Connected => "rust-ssh client：已连接",
-            ClientConnectionState::Retrying => "rust-ssh client：正在重试",
-            ClientConnectionState::Error => "rust-ssh client：连接失败",
+            ClientConnectionState::Stopped => "Rust-SSH-Client：未运行",
+            ClientConnectionState::Connecting => "Rust-SSH-Client：正在连接",
+            ClientConnectionState::Connected => "Rust-SSH-Client：已连接",
+            ClientConnectionState::Retrying => "Rust-SSH-Client：正在重试",
+            ClientConnectionState::Error => "Rust-SSH-Client：连接失败",
         };
         let _ = self.icon.set_tooltip(Some(tooltip));
     }
@@ -381,7 +381,7 @@ impl eframe::App for ClientApp {
         #[cfg(windows)]
         self.poll_tray(context);
         egui::CentralPanel::default().show(context, |ui| {
-            ui.heading("rust-ssh client");
+            ui.heading("Rust-SSH-Client");
             ui.colored_label(egui::Color32::GRAY, "Windows 被控端");
             ui.add_space(8.0);
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -424,7 +424,7 @@ impl eframe::App for ClientApp {
                 });
             });
             ui.add_space(4.0);
-            ui.small("关闭窗口会隐藏到右下角托盘；托盘菜单中的“关闭”才会停止 client。client 只主动连接服务器，不监听公网端口。");
+            ui.small("关闭窗口会隐藏到右下角托盘；托盘菜单中的“关闭”才会停止 Rust-SSH-Client。它只主动连接服务器，不监听公网端口。");
         });
         context.request_repaint_after(Duration::from_millis(250));
     }
@@ -667,7 +667,7 @@ impl eframe::App for ConnectApp {
         }
 
         egui::CentralPanel::default().show(context, |ui| {
-            ui.heading("rust-ssh connect");
+            ui.heading("Rust-SSH-Connect");
             ui.colored_label(egui::Color32::GRAY, "主控端");
             ui.add_space(8.0);
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -1047,7 +1047,7 @@ fn load_settings<T>(name: &str) -> T
 where
     T: DeserializeOwned + Default,
 {
-    migrate_legacy_config();
+    migrate_legacy_config(name);
     let path = config_dir().join(name);
     fs::read_to_string(path)
         .ok()
@@ -1107,47 +1107,52 @@ fn config_dir() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn migrate_legacy_config() {
-    let Some(legacy_directory) =
-        std::env::var_os("APPDATA").map(|path| PathBuf::from(path).join("rust-ssh"))
-    else {
-        return;
-    };
+fn migrate_legacy_config(name: &str) {
     let directory = config_dir();
-    if directory == legacy_directory {
-        return;
+    let mut source_directories = Vec::new();
+    if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+        let path = PathBuf::from(path);
+        match name {
+            "client.json" => {
+                source_directories.push(path.join("rust-ssh-client").join("data"));
+            }
+            "connect.json" | "connect.setup" => {
+                source_directories.push(path.join("rust-ssh-connect").join("data"));
+            }
+            _ => {}
+        }
+    }
+    if let Some(path) = std::env::var_os("APPDATA") {
+        source_directories.push(PathBuf::from(path).join("rust-ssh"));
     }
 
-    let files = ["client.json", "connect.json", "connect.setup"];
-    let should_copy = files
-        .iter()
-        .any(|name| legacy_directory.join(name).is_file() && !directory.join(name).exists());
-    if !should_copy {
-        return;
-    }
-    if let Err(error) = fs::create_dir_all(&directory) {
-        tracing::warn!(%error, path = %directory.display(), "could not create new rust-ssh data directory");
-        return;
-    }
-
-    for name in files {
-        let source = legacy_directory.join(name);
+    for source_directory in source_directories {
+        if source_directory == directory {
+            continue;
+        }
+        let source = source_directory.join(name);
         let destination = directory.join(name);
-        if source.is_file() && !destination.exists() {
-            match fs::copy(&source, &destination) {
-                Ok(_) => {
-                    tracing::info!(file = name, path = %directory.display(), "migrated rust-ssh data file")
-                }
-                Err(error) => {
-                    tracing::warn!(%error, file = name, "could not migrate legacy rust-ssh data file")
-                }
+        if !source.is_file() || destination.exists() {
+            continue;
+        }
+        if let Err(error) = fs::create_dir_all(&directory) {
+            tracing::warn!(%error, path = %directory.display(), "could not create Rust-SSH data directory");
+            return;
+        }
+        match fs::copy(&source, &destination) {
+            Ok(_) => {
+                tracing::info!(file = name, path = %directory.display(), "migrated old Rust-SSH data file")
+            }
+            Err(error) => {
+                tracing::warn!(%error, file = name, "could not migrate old Rust-SSH data file")
             }
         }
+        break;
     }
 }
 
 #[cfg(not(windows))]
-fn migrate_legacy_config() {}
+fn migrate_legacy_config(_name: &str) {}
 
 fn new_device_id() -> String {
     device_id::generate().unwrap_or_else(|error| {

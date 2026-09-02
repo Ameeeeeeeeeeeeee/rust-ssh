@@ -1,36 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
-  <Package Name="rust-ssh connect" Manufacturer="rust-ssh" Version="$(var.ProductVersion)" Scope="perUser" UpgradeCode="A5C7A43D-8198-47C4-8C29-0F36F519A8E2">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of rust-ssh connect is already installed." />
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Rust-SSH-Connect" Manufacturer="Rust-SSH" Version="$(var.ProductVersion)" Scope="perMachine" UpgradeCode="A5C7A43D-8198-47C4-8C29-0F36F519A8E2">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Rust-SSH-Connect is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="RustSshIcon" SourceFile="$(var.IconPath)" />
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
-    <Feature Id="MainFeature" Title="rust-ssh connect" Level="1">
+    <Feature Id="MainFeature" Title="Rust-SSH-Connect" Level="1">
       <ComponentRef Id="ConnectExecutable" />
+      <ComponentRef Id="ConnectData" />
       <ComponentRef Id="ConnectShortcut" />
     </Feature>
   </Package>
 
   <Fragment>
-    <StandardDirectory Id="LocalAppDataFolder">
-      <Directory Id="INSTALLFOLDER" Name="rust-ssh-connect" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Connect">
+        <Directory Id="DataFolder" Name="data" />
+      </Directory>
     </StandardDirectory>
 
     <Component Id="ConnectExecutable" Directory="INSTALLFOLDER" Guid="4180610f-b77c-43ea-9c24-7c6a741efc50">
-      <File Id="ConnectExe" Source="$(var.BinaryPath)" KeyPath="no" />
-      <RegistryValue Root="HKCU" Key="Software\rust-ssh\Connect" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      <File Id="ConnectExe" Source="$(var.BinaryPath)" KeyPath="yes" />
       <RemoveFile Id="RemoveConnectExecutable" Name="rust-ssh-connect.exe" On="uninstall" />
       <RemoveFolder Id="RemoveConnectInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
     </Component>
 
+    <Component Id="ConnectData" Directory="DataFolder" Guid="b58b37ca-2f4c-4b07-a3e1-a5eebf9b7c1d">
+      <CreateFolder>
+        <util:PermissionEx User="Users" GenericAll="yes" />
+      </CreateFolder>
+    </Component>
+
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="ApplicationProgramsFolder" Name="rust-ssh" />
+      <Directory Id="ApplicationProgramsFolder" Name="Rust-SSH" />
     </StandardDirectory>
 
     <Component Id="ConnectShortcut" Directory="ApplicationProgramsFolder">
-      <Shortcut Id="ConnectStartMenuShortcut" Name="rust-ssh connect" Target="[INSTALLFOLDER]rust-ssh-connect.exe" WorkingDirectory="INSTALLFOLDER" Icon="RustSshIcon" IconIndex="0" />
+      <Shortcut Id="ConnectStartMenuShortcut" Name="Rust-SSH-Connect" Target="[INSTALLFOLDER]rust-ssh-connect.exe" WorkingDirectory="INSTALLFOLDER" Icon="RustSshIcon" IconIndex="0" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
-      <RegistryValue Root="HKCU" Key="Software\rust-ssh" Name="connectInstalled" Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Rust-SSH" Name="connectInstalled" Type="integer" Value="1" KeyPath="yes" />
     </Component>
   </Fragment>
 </Wix>

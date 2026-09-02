@@ -1,5 +1,5 @@
 [Unit]
-Description=rust-ssh relay
+Description=Rust-SSH-Server
 After=network-online.target
 Wants=network-online.target
 

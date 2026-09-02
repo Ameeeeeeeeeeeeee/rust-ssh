@@ -1,9 +1,9 @@
-# rust-ssh 三端部署：简洁版
+# Rust-SSH 三端部署：简洁版
 
 这份手册只保留能跑通的步骤。三端关系如下：
 
 ```text
-Windows client ──主动连接──> Ubuntu 服务器:24443 <──主动连接── Mac/Windows connect
+Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 Rust-SSH-Server:24443 <──主动连接── Mac/Windows Rust-SSH-Connect
 ```
 
 - 服务器只需要对外开放一个 TCP 端口：`24443`。
@@ -26,10 +26,10 @@ SERVER_IP=198.51.100.10
 export SERVER_IP
 ```
 
-下载最新正式版 relay 和 systemd 服务：
+下载最新正式版 Rust-SSH-Server 和 systemd 服务：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/Rust-SSH-Server-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
 sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-relay.service
 ```
@@ -82,13 +82,13 @@ sudo systemctl status rust-ssh-relay --no-pager
 
 ## 2. 部署 Windows client
 
-从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载并安装 MSI：
+从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载并安装 Rust-SSH-Client MSI：
 
 ```text
-rust-ssh-client-windows-x86_64.msi
+Rust-SSH-Client-windows-x86_64.msi
 ```
 
-MSI 会打开安装向导，可以选择安装目录，并创建开始菜单入口；Release 不提供单独的 Windows `.exe`。双击开始菜单里的 rust-ssh client 即可。client 自己的配置会保存在所选安装目录下的 `data` 文件夹中。
+MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client`，也可以在向导中修改路径；它会创建开始菜单入口。Release 不提供单独的 Windows `.exe`。双击开始菜单里的 Rust-SSH-Client 即可。配置会保存在安装目录下的 `data` 文件夹中。为保证普通用户可写，`data` 对本机 Users 组开放；多人共用电脑时请保护好配置码。
 
 第一次打开 client 时，界面会显示一串类似下面的设备 ID：
 
@@ -96,7 +96,7 @@ MSI 会打开安装向导，可以选择安装目录，并创建开始菜单入�
 rssh-0123456789abcdef0123456789abcdef
 ```
 
-点击“复制”，把这串 ID 发给服务器管理员。它是随机生成并保存在本机的，不使用 Windows 计算机名；修改计算机名不会影响连接。client 配置保存在 `<client安装目录>\data\client.json`。
+点击“复制”，把这串 ID 发给服务器管理员。它是随机生成并保存在本机的，不使用 Windows 计算机名；修改计算机名不会影响连接。Rust-SSH-Client 配置保存在 `<client安装目录>\data\client.json`。
 
 确认 Windows 自带 OpenSSH Server 正常：
 
@@ -132,7 +132,7 @@ sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERV
 1. 在服务器创建 `/etc/rust-ssh/devices/<设备ID>.token`；
 2. 输出只属于这台设备的 `rssh1:...` 配置码。
 
-复制输出的整行配置码，粘贴回这台 Windows client 的“配置码”框。点击“保存”→“启动”。状态显示绿色“已连接服务器”后，client 就在等待 SSH 连接；它不会自动开机启动。关闭窗口只会隐藏到右下角托盘，右键托盘图标选择“关闭”才会停止。
+复制输出的整行配置码，粘贴回这台 Windows Rust-SSH-Client 的“配置码”框。点击“保存”→“启动”。状态显示绿色“已连接服务器”后，client 就在等待 SSH 连接；它不会自动开机启动。关闭窗口只会隐藏到右下角托盘，右键托盘图标选择“关闭”才会停止。
 
 relay 会自动读取新的 token，通常等待约 2 秒即可，不需要重启服务。可以在服务器查看注册情况：
 
@@ -150,20 +150,20 @@ sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key 
 
 这份配置码拥有查看和连接所有已登记设备的权限，只交给可信的主控端。不要粘贴给 client。
 
-从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载：
+从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载 Rust-SSH-Connect：
 
 ```text
-macOS Apple Silicon：rust-ssh-connect-macos-aarch64
-Windows x86-64：rust-ssh-connect-windows-x86_64.msi
+macOS Apple Silicon：Rust-SSH-Connect-macos-aarch64
+Windows x86-64：Rust-SSH-Connect-windows-x86_64.msi
 ```
 
 macOS 首次运行前执行：
 
 ```bash
-chmod +x rust-ssh-connect-macos-aarch64
+chmod +x Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 rust-ssh connect。connect 自己的配置和配置码会保存在所选安装目录下的 `data` 文件夹中。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码会保存在安装目录下的 `data` 文件夹中。
 
 打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。依次点击：
 

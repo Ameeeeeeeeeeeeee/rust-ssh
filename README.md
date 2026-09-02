@@ -1,6 +1,6 @@
-# rust-ssh
+# Rust-SSH
 
-面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设备主动连接服务器 + 服务器中继”模式。Windows client 和 Mac/Windows connect 都只主动访问服务器，因此可以跨越不同 AP、AP 隔离和没有端口映射的网络。
+Rust-SSH 是面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设备主动连接服务器 + 服务器中继”模式。Windows Rust-SSH-Client 和 Mac/Windows Rust-SSH-Connect 都只主动访问服务器，因此可以跨越不同 AP、AP 隔离和没有端口映射的网络。
 
 普通用户部署请直接阅读：
 
@@ -11,7 +11,7 @@
 
 ```text
 Windows client ──主动 Noise 连接──┐
-                                  ├── Ubuntu 服务器 relay:24443
+                                  ├── Ubuntu 服务器 Rust-SSH-Server:24443
 Mac/Windows connect ─主动连接─────┘
                                       │
                                       └──目标 client ──本机 127.0.0.1:22
@@ -70,7 +70,7 @@ rust-ssh device add --device-id rssh-0123456789abcdef0123456789abcdef --server 1
 
 ## Relay configuration
 
-`relay` 的 CLI/env 配置如下：
+`Rust-SSH-Server` 的 CLI/env 配置如下；为兼容已有部署，命令名仍然是 `rust-ssh relay`：
 
 | CLI | Environment | Meaning |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh/controller.token
 RUST_SSH_DEVICES_DIR=/etc/rust-ssh/devices
 ```
 
-systemd 示例见 [`examples/rust-ssh-relay.service`](examples/rust-ssh-relay.service)，环境文件见 [`examples/rust-ssh-relay.env.example`](examples/rust-ssh-relay.env.example)。
+systemd 示例见 [`examples/rust-ssh-relay.service`](examples/rust-ssh-relay.service)，环境文件见 [`examples/rust-ssh-relay.env.example`](examples/rust-ssh-relay.env.example)。服务在系统中显示为 `Rust-SSH-Server`。
 
 ## CLI surface
 
@@ -160,16 +160,18 @@ cargo build --release --locked --features desktop --bin rust-ssh-connect
 向 Git push `v*` 标签会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)，构建并上传：
 
 ```text
-rust-ssh-relay-linux-x86_64
-rust-ssh-client-windows-x86_64.msi
-rust-ssh-connect-windows-x86_64.msi
-rust-ssh-connect-macos-aarch64
+Rust-SSH-Server-linux-x86_64
+Rust-SSH-Client-windows-x86_64.msi
+Rust-SSH-Connect-windows-x86_64.msi
+Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows Release 只提供 MSI 安装包，不单独提供便携版 `.exe`；MSI 内部包含对应程序，并支持覆盖安装新版本。Windows agent 的命令行程序仍可从源码编译，但不会作为 Release 附件发布。编译文件不会进入 Git 源码仓库，`target/` 已被 `.gitignore` 忽略。
+Windows Release 只提供 MSI 安装包，不单独提供便携版 `.exe`；MSI 内部包含 Rust-SSH-Client 或 Rust-SSH-Connect，需要管理员权限并默认安装到 `C:\Program Files` 下，配置放在安装目录的 `data` 文件夹。MSI 支持覆盖安装新版本。Windows agent 的命令行程序仍可从源码编译，但不会作为 Release 附件发布。编译文件不会进入 Git 源码仓库，`target/` 已被 `.gitignore` 忽略。
 
 ## Security scope
 
 公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token、未知设备拒绝和单设备单会话限制。
 
 当前明确不包含：IP 限速、失败封禁、细粒度 ACL、审计、BitLocker、证书体系和自动下载新版本。修改 token 文件后的新认证会热加载；已经建立的会话不会被强制断开。
+
+Windows MSI 默认安装到 `C:\Program Files`；为了让普通用户保存配置，安装目录中的 `data` 文件夹对本机 Users 组可写。单用户电脑适合此布局，多用户电脑应额外保护其中的配置码。
