@@ -68,14 +68,17 @@ jobs:
         run: cargo build --release --locked --target x86_64-pc-windows-msvc --features desktop --bin "${{ matrix.binary }}"
       - name: Install WiX
         shell: pwsh
-        run: dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" --version 5.0.2 wix
+        run: |
+          dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" --version 5.0.2 wix
+          & "$env:RUNNER_TEMP\wix\wix.exe" extension add WixToolset.UI.wixext/5.0.2
       - name: Build MSI
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
           $binaryPath = (Resolve-Path "target\x86_64-pc-windows-msvc\release\${{ matrix.binary }}.exe").Path
+          $iconPath = (Resolve-Path "packaging\windows\rust-ssh.ico").Path
           New-Item -ItemType Directory -Force dist | Out-Null
-          & "$env:RUNNER_TEMP\wix\wix.exe" build -arch x64 -d "ProductVersion=$version" -d "BinaryPath=$binaryPath" "packaging\windows\${{ matrix.wxs }}" -out "dist\${{ matrix.output }}"
+          & "$env:RUNNER_TEMP\wix\wix.exe" build -arch x64 -culture zh-CN -ext WixToolset.UI.wixext -d "ProductVersion=$version" -d "BinaryPath=$binaryPath" -d "IconPath=$iconPath" "packaging\windows\${{ matrix.wxs }}" -out "dist\${{ matrix.output }}"
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ssh-${{ matrix.name }}-msi

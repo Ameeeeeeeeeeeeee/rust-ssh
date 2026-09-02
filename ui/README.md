@@ -9,10 +9,10 @@
 - 第一次打开时随机生成 `rssh-...` 设备 ID，并在 UI 中显示；
 - 点击“复制”把设备 ID交给服务器管理员；
 - 服务器执行 `device add` 后，粘贴返回的设备配置码；
-- 设备 ID 保存在 `%APPDATA%\rust-ssh\client.json`，与 Windows 计算机名无关；
+- Windows MSI 安装后的设备 ID 保存在安装目录下的 `data\client.json`，与 Windows 计算机名无关；旧版 `%APPDATA%\rust-ssh` 配置会在首次启动时迁移；
 - 本地 SSH 默认 `127.0.0.1:22`；
 - 点击“启动”后在当前窗口进程内运行 agent；
-- 关闭窗口即停止 client，不自动安装开机自启。
+- 关闭窗口只隐藏到托盘；右键托盘菜单中的“关闭”才会停止 client，不自动安装开机自启。
 
 设备配置码必须绑定当前设备 ID，不能使用 controller 配置码，也不能手动把 ID 改成另一台设备的 ID。
 
@@ -25,6 +25,8 @@
 - 点击“配置 SSH”后自动维护用户 SSH 配置；
 - 点击“连接选中设备”后打开系统 Terminal/cmd；
 - 生成的 `rust-ssh-设备ID` 可供 Terminal 和 VS Code Remote-SSH 使用。
+
+Windows MSI 会显示安装向导并允许选择安装目录。Windows client/connect 的自身配置、配置码和设备 ID 都放在各自安装目录下的 `data` 文件夹；系统 SSH 配置仍位于 `%USERPROFILE%\.ssh\config`，这是 OpenSSH 和 VS Code 默认读取的位置。
 
 GUI 只负责配置和连接入口，真正的 SSH 认证和终端仍由系统 OpenSSH 提供。
 

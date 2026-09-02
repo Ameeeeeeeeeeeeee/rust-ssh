@@ -88,7 +88,7 @@ sudo systemctl status rust-ssh-relay --no-pager
 rust-ssh-client-windows-x86_64.msi
 ```
 
-MSI 会把 client 安装到 Windows 的程序目录，并创建开始菜单入口；Release 不提供单独的 Windows `.exe`。双击开始菜单里的 rust-ssh client 即可。
+MSI 会打开安装向导，可以选择安装目录，并创建开始菜单入口；Release 不提供单独的 Windows `.exe`。双击开始菜单里的 rust-ssh client 即可。client 自己的配置会保存在所选安装目录下的 `data` 文件夹中。
 
 第一次打开 client 时，界面会显示一串类似下面的设备 ID：
 
@@ -96,7 +96,7 @@ MSI 会把 client 安装到 Windows 的程序目录，并创建开始菜单入�
 rssh-0123456789abcdef0123456789abcdef
 ```
 
-点击“复制”，把这串 ID 发给服务器管理员。它是随机生成并保存在本机的，不使用 Windows 计算机名；修改计算机名不会影响连接。client 配置保存在 `%APPDATA%\rust-ssh\client.json`。
+点击“复制”，把这串 ID 发给服务器管理员。它是随机生成并保存在本机的，不使用 Windows 计算机名；修改计算机名不会影响连接。client 配置保存在 `<client安装目录>\data\client.json`。
 
 确认 Windows 自带 OpenSSH Server 正常：
 
@@ -163,7 +163,7 @@ macOS 首次运行前执行：
 chmod +x rust-ssh-connect-macos-aarch64
 ```
 
-Windows 双击 MSI 安装，然后从开始菜单打开 rust-ssh connect。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 rust-ssh connect。connect 自己的配置和配置码会保存在所选安装目录下的 `data` 文件夹中。
 
 打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。依次点击：
 

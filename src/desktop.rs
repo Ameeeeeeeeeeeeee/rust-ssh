@@ -20,7 +20,13 @@ use tokio::sync::oneshot;
 #[cfg(windows)]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 #[cfg(windows)]
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+
+#[cfg(windows)]
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 const CLIENT_CONFIG_VERSION: u8 = 1;
 const CJK_FONT_NAME: &str = "rust-ssh-system-cjk";
@@ -48,6 +54,13 @@ fn connection_state_color(state: ClientConnectionState) -> egui::Color32 {
 #[cfg(windows)]
 struct ClientTray {
     icon: TrayIcon,
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct TraySignals {
+    show: AtomicBool,
+    quit: AtomicBool,
 }
 
 #[cfg(windows)]
@@ -105,6 +118,40 @@ fn tray_icon_for_state(state: ClientConnectionState) -> Option<Icon> {
     Icon::from_rgba(rgba, size, size).ok()
 }
 
+#[cfg(windows)]
+fn install_tray_event_handlers(signals: &Arc<TraySignals>, context: &egui::Context) {
+    let show_signals = Arc::clone(signals);
+    let show_context = context.clone();
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        let should_show = matches!(
+            event,
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            }
+        );
+        if should_show {
+            show_signals.show.store(true, Ordering::Release);
+            show_context.request_repaint();
+        }
+    }));
+
+    let menu_signals = Arc::clone(signals);
+    let menu_context = context.clone();
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        match event.id().as_ref() {
+            "show" => menu_signals.show.store(true, Ordering::Release),
+            "quit" => menu_signals.quit.store(true, Ordering::Release),
+            _ => return,
+        }
+        menu_context.request_repaint();
+    }));
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct ClientSettings {
@@ -153,6 +200,8 @@ pub struct ClientApp {
     #[cfg(windows)]
     tray: Option<ClientTray>,
     #[cfg(windows)]
+    tray_signals: Arc<TraySignals>,
+    #[cfg(windows)]
     allow_close: bool,
 }
 
@@ -160,6 +209,10 @@ impl ClientApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         install_cjk_font(&creation_context.egui_ctx);
         install_ui_style(&creation_context.egui_ctx);
+        #[cfg(windows)]
+        let tray_signals = Arc::new(TraySignals::default());
+        #[cfg(windows)]
+        install_tray_event_handlers(&tray_signals, &creation_context.egui_ctx);
         Self {
             settings: load_client_settings(),
             status: "未运行".to_owned(),
@@ -169,6 +222,8 @@ impl ClientApp {
             status_rx: None,
             #[cfg(windows)]
             tray: ClientTray::new(),
+            #[cfg(windows)]
+            tray_signals,
             #[cfg(windows)]
             allow_close: false,
         }
@@ -299,18 +354,14 @@ impl ClientApp {
 
     #[cfg(windows)]
     fn poll_tray(&mut self, context: &egui::Context) {
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            match event.id().as_ref() {
-                "show" => {
-                    context.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    context.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
-                "quit" => {
-                    self.allow_close = true;
-                    context.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                _ => {}
-            }
+        if self.tray_signals.quit.swap(false, Ordering::AcqRel) {
+            self.allow_close = true;
+            self.stop();
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if self.tray_signals.show.swap(false, Ordering::AcqRel) {
+            context.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            context.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            context.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
         if context.input(|input| input.viewport().close_requested())
@@ -748,6 +799,140 @@ fn install_ui_style(context: &egui::Context) {
     context.set_style(style);
 }
 
+/// Generate the small rust-ssh mark used by the native window and taskbar.
+///
+/// Keeping this icon in code means source builds and Release builds use the
+/// same icon without needing an additional runtime asset.
+pub fn app_icon() -> egui::IconData {
+    const SIZE: u32 = 64;
+    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
+
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let inside = (12..52).contains(&x) && (8..56).contains(&y);
+            let corner = [
+                (x < 18 && y < 14, (18 - x) as i32, (14 - y) as i32),
+                (x >= 46 && y < 14, (x - 45) as i32, (14 - y) as i32),
+                (x < 18 && y >= 50, (18 - x) as i32, (y - 49) as i32),
+                (x >= 46 && y >= 50, (x - 45) as i32, (y - 49) as i32),
+            ];
+            let rounded_corner = corner.iter().any(|(active, dx, dy)| {
+                *active && dx.saturating_mul(*dx) + dy.saturating_mul(*dy) > 36
+            });
+            if inside && !rounded_corner {
+                set_icon_pixel(&mut rgba, SIZE, x, y, [20, 32, 49, 255]);
+            }
+        }
+    }
+
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (17.0, 16.0),
+        (47.0, 16.0),
+        [52, 207, 185, 255],
+        2.5,
+    );
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (47.0, 16.0),
+        (47.0, 48.0),
+        [52, 207, 185, 255],
+        2.5,
+    );
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (47.0, 48.0),
+        (17.0, 48.0),
+        [52, 207, 185, 255],
+        2.5,
+    );
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (17.0, 48.0),
+        (17.0, 16.0),
+        [52, 207, 185, 255],
+        2.5,
+    );
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (23.0, 27.0),
+        (29.0, 32.0),
+        [235, 248, 246, 255],
+        3.5,
+    );
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (29.0, 32.0),
+        (23.0, 37.0),
+        [235, 248, 246, 255],
+        3.5,
+    );
+    draw_icon_line(
+        &mut rgba,
+        SIZE,
+        (35.0, 39.0),
+        (43.0, 39.0),
+        [104, 225, 146, 255],
+        3.5,
+    );
+
+    egui::IconData {
+        rgba,
+        width: SIZE,
+        height: SIZE,
+    }
+}
+
+fn set_icon_pixel(rgba: &mut [u8], size: u32, x: u32, y: u32, color: [u8; 4]) {
+    let index = ((y * size + x) * 4) as usize;
+    rgba[index..index + 4].copy_from_slice(&color);
+}
+
+fn draw_icon_line(
+    rgba: &mut [u8],
+    size: u32,
+    start: (f32, f32),
+    end: (f32, f32),
+    color: [u8; 4],
+    width: f32,
+) {
+    let min_x = start.0.min(end.0) - width;
+    let max_x = start.0.max(end.0) + width;
+    let min_y = start.1.min(end.1) - width;
+    let max_y = start.1.max(end.1) + width;
+    let denominator = (end.0 - start.0).powi(2) + (end.1 - start.1).powi(2);
+
+    for y in 0..size {
+        for x in 0..size {
+            let point = (x as f32 + 0.5, y as f32 + 0.5);
+            if point.0 < min_x || point.0 > max_x || point.1 < min_y || point.1 > max_y {
+                continue;
+            }
+            let progress = if denominator == 0.0 {
+                0.0
+            } else {
+                ((point.0 - start.0) * (end.0 - start.0) + (point.1 - start.1) * (end.1 - start.1))
+                    / denominator
+            };
+            let progress = progress.clamp(0.0, 1.0);
+            let nearest = (
+                start.0 + progress * (end.0 - start.0),
+                start.1 + progress * (end.1 - start.1),
+            );
+            let distance = (point.0 - nearest.0).powi(2) + (point.1 - nearest.1).powi(2);
+            if distance <= (width / 2.0).powi(2) {
+                set_icon_pixel(rgba, size, x, y, color);
+            }
+        }
+    }
+}
+
 fn cjk_font_path() -> Option<PathBuf> {
     #[cfg(windows)]
     {
@@ -862,6 +1047,7 @@ fn load_settings<T>(name: &str) -> T
 where
     T: DeserializeOwned + Default,
 {
+    migrate_legacy_config();
     let path = config_dir().join(name);
     fs::read_to_string(path)
         .ok()
@@ -871,7 +1057,7 @@ where
 
 fn load_client_settings() -> ClientSettings {
     let mut settings: ClientSettings = load_settings("client.json");
-    let mut changed = false;
+    let mut changed = !config_dir().join("client.json").is_file();
     if settings.config_version != CLIENT_CONFIG_VERSION {
         settings.device_id = new_device_id();
         settings.pairing_code.clear();
@@ -902,8 +1088,16 @@ where
 
 fn config_dir() -> PathBuf {
     #[cfg(windows)]
-    if let Some(path) = std::env::var_os("APPDATA") {
-        return PathBuf::from(path).join("rust-ssh");
+    {
+        if let Ok(executable) = std::env::current_exe() {
+            if let Some(parent) = executable.parent() {
+                return parent.join("data");
+            }
+        }
+
+        if let Some(path) = std::env::var_os("APPDATA") {
+            return PathBuf::from(path).join("rust-ssh");
+        }
     }
 
     if let Some(path) = std::env::var_os("HOME") {
@@ -911,6 +1105,49 @@ fn config_dir() -> PathBuf {
     }
     PathBuf::from(".").join("rust-ssh")
 }
+
+#[cfg(windows)]
+fn migrate_legacy_config() {
+    let Some(legacy_directory) =
+        std::env::var_os("APPDATA").map(|path| PathBuf::from(path).join("rust-ssh"))
+    else {
+        return;
+    };
+    let directory = config_dir();
+    if directory == legacy_directory {
+        return;
+    }
+
+    let files = ["client.json", "connect.json", "connect.setup"];
+    let should_copy = files
+        .iter()
+        .any(|name| legacy_directory.join(name).is_file() && !directory.join(name).exists());
+    if !should_copy {
+        return;
+    }
+    if let Err(error) = fs::create_dir_all(&directory) {
+        tracing::warn!(%error, path = %directory.display(), "could not create new rust-ssh data directory");
+        return;
+    }
+
+    for name in files {
+        let source = legacy_directory.join(name);
+        let destination = directory.join(name);
+        if source.is_file() && !destination.exists() {
+            match fs::copy(&source, &destination) {
+                Ok(_) => {
+                    tracing::info!(file = name, path = %directory.display(), "migrated rust-ssh data file")
+                }
+                Err(error) => {
+                    tracing::warn!(%error, file = name, "could not migrate legacy rust-ssh data file")
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn migrate_legacy_config() {}
 
 fn new_device_id() -> String {
     device_id::generate().unwrap_or_else(|error| {
@@ -962,23 +1199,41 @@ fn install_ssh_host(settings: &ConnectSettings, device_id: &str) -> Result<Strin
     }
     let newline = if cfg!(windows) { "\r\n" } else { "\n" };
 
-    let text = [
+    let text = ssh_host_block(
+        &host,
+        device_id,
+        &user,
+        executable,
+        setup_code_path,
+        newline,
+    );
+    let path = user_ssh_config_path()?;
+    update_managed_ssh_config(&path, &text, device_id, &host)?;
+    Ok(host)
+}
+
+fn ssh_host_block(
+    host: &str,
+    device_id: &str,
+    user: &str,
+    executable: &str,
+    setup_code_path: &str,
+    newline: &str,
+) -> String {
+    [
         format!("Host {host}"),
-        "    HostName rust-ssh-proxy".to_owned(),
-        format!("    HostKeyAlias {device_id}"),
-        format!("    User {user}"),
+        "\tHostName rust-ssh-proxy".to_owned(),
+        format!("\tHostKeyAlias {device_id}"),
+        format!("\tUser {user}"),
         format!(
-            "    ProxyCommand {} --proxy --setup-code-file {} --target {}",
+            "\tProxyCommand {} --proxy --setup-code-file {} --target {}",
             shell_double_quote(executable),
             shell_double_quote(setup_code_path),
             shell_double_quote(device_id),
         ),
     ]
     .join(newline)
-        + newline;
-    let path = user_ssh_config_path()?;
-    update_managed_ssh_config(&path, &text, device_id, &host)?;
-    Ok(host)
+        + newline
 }
 
 fn user_ssh_config_path() -> Result<PathBuf> {
@@ -1181,18 +1436,33 @@ mod tests {
     }
 
     #[test]
+    fn generated_ssh_host_block_uses_tabs_for_directives() {
+        let block = ssh_host_block(
+            "example-host",
+            "rssh-device-a",
+            "windows-user",
+            r"C:\rust-ssh-connect.exe",
+            r"C:\rust-ssh\data\connect.setup",
+            "\n",
+        );
+        assert!(block.contains("\n\tHostName rust-ssh-proxy\n"));
+        assert!(block.contains("\n\tUser windows-user\n"));
+        assert!(!block.contains("\n    HostName"));
+    }
+
+    #[test]
     fn managed_ssh_config_keeps_multiple_devices_and_replaces_one_device() {
         let path = std::env::temp_dir().join(format!(
             "rust-ssh-ssh-config-test-{}-{}",
             std::process::id(),
             Instant::now().elapsed().as_nanos()
         ));
-        let first = "Host rssh-device-a\n    HostKeyAlias rssh-device-a\n";
-        let second = "Host rssh-device-b\n    HostKeyAlias rssh-device-b\n";
+        let first = "Host rssh-device-a\n\tHostKeyAlias rssh-device-a\n";
+        let second = "Host rssh-device-b\n\tHostKeyAlias rssh-device-b\n";
 
         update_managed_ssh_config(&path, first, "rssh-device-a", "rssh-device-a").unwrap();
         update_managed_ssh_config(&path, second, "rssh-device-b", "rssh-device-b").unwrap();
-        let replacement = "Host renamed-device-a\n    HostKeyAlias rssh-device-a\n";
+        let replacement = "Host renamed-device-a\n\tHostKeyAlias rssh-device-a\n";
         update_managed_ssh_config(&path, replacement, "rssh-device-a", "renamed-device-a").unwrap();
 
         let text = fs::read_to_string(&path).unwrap();

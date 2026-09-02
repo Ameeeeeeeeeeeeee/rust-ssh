@@ -1,6 +1,7 @@
 /target/
 /dist/
 /dist-test/
+/.wix/
 .cargo-home/
 *.log
 .env

@@ -172,7 +172,7 @@ sudo ufw allow 24443/tcp
 rust-ssh-client-windows-x86_64.msi
 ```
 
-Release 不提供单独的 Windows `.exe`。MSI 会把 client 安装到 Windows 程序目录并创建开始菜单入口；以后安装更高版本 MSI 可以覆盖升级，不会自动清除 `%APPDATA%\rust-ssh\client.json`。
+Release 不提供单独的 Windows `.exe`。MSI 会显示安装向导，允许选择安装目录并创建开始菜单入口；以后安装更高版本 MSI 可以覆盖升级。client 自己的配置会保存在所选安装目录下的 `data` 文件夹中；升级时保持相同安装目录即可保留配置。
 
 第一次打开时，client GUI 会显示类似下面的设备 ID：
 
@@ -183,7 +183,7 @@ rssh-0123456789abcdef0123456789abcdef
 点击“复制”，把这串 ID 交给服务器管理员。这个 ID：
 
 - 由 client 首次运行时随机生成；
-- 保存在 `%APPDATA%\rust-ssh\client.json`；
+- 保存在 `<client安装目录>\data\client.json`；
 - 不使用 Windows 的 `COMPUTERNAME` 或主机名；
 - 不会因修改 Windows 主机名而变化；
 - 不是秘密，单独知道它不能通过认证。
@@ -294,7 +294,7 @@ Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装
 chmod +x rust-ssh-connect-macos-aarch64
 ```
 
-Windows 双击 MSI 安装，然后从开始菜单打开 rust-ssh connect。MSI 安装路径会被 GUI 自动写入 SSH 配置；不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 rust-ssh connect。connect 自己的配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
 
 主控端还需要系统 OpenSSH。检查：
 
@@ -320,7 +320,7 @@ connect 的配置文件位置：
 
 ```text
 macOS：~/.config/rust-ssh/connect.json
-Windows：%APPDATA%\rust-ssh\connect.json
+Windows：<connect安装目录>\data\connect.json
 ```
 
 配置 SSH 后，connect 会在系统 SSH 配置中写入一个受管理区块：
@@ -357,7 +357,7 @@ ssh rssh-0123456789abcdef0123456789abcdef
 ### 5.2 Windows client
 
 ```text
-%APPDATA%\rust-ssh\client.json
+<client安装目录>\data\client.json
 ```
 
 其中保存设备 ID、设备配置码和本地 SSH 目标。设备配置码包含设备 token，应当按秘密材料保护。
@@ -366,7 +366,7 @@ ssh rssh-0123456789abcdef0123456789abcdef
 
 ```text
 macOS：~/.config/rust-ssh/connect.json
-Windows：%APPDATA%\rust-ssh\connect.json
+Windows：<connect安装目录>\data\connect.json
 ```
 
 其中保存 controller 配置码。它的权限等同于 controller token，不要复制给 client。
@@ -404,7 +404,7 @@ Windows：%APPDATA%\rust-ssh\connect.json
 2. 在 Windows PowerShell 执行备份（不要直接删除）：
 
 ```powershell
-Move-Item "$env:APPDATA\rust-ssh\client.json" "$env:APPDATA\rust-ssh\client.json.bak"
+Move-Item "<client安装目录>\data\client.json" "<client安装目录>\data\client.json.bak"
 ```
 
 3. 重新打开 client，它会生成新的随机设备 ID；
@@ -434,7 +434,7 @@ sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD
 sudo systemctl restart rust-ssh-relay
 ```
 
-旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows client/connect 使用 MSI；安装新 MSI 会覆盖升级程序，但保留 `%APPDATA%\rust-ssh` 配置。
+旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows client/connect 使用 MSI；新版本首次启动时会把旧版 `%APPDATA%\rust-ssh` 中的配置迁移到当前安装目录的 `data` 文件夹。
 
 ### 7.4 替换 controller token
 
