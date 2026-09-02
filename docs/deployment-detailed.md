@@ -54,12 +54,12 @@ export SERVER_IP
 ssh relay-server
 ```
 
-下载 v0.4.2 的 Linux relay 和 systemd 服务文件：
+下载最新正式版 relay 和 systemd 服务文件：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.2/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.2/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-relay.service
 ```
 
 如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
@@ -166,7 +166,7 @@ sudo ufw allow 24443/tcp
 
 ### 3.1 下载并首次打开
 
-从 [v0.4.2 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.2) 下载并安装 MSI：
+从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载并安装 MSI：
 
 ```text
 rust-ssh-client-windows-x86_64.msi
@@ -281,7 +281,7 @@ controller 只有一个 token 文件，但可以有多个 connect 实例使用�
 
 ### 4.2 下载并打开 connect
 
-从 [v0.4.2 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.2) 下载：
+从[最新 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest) 下载：
 
 ```text
 macOS Apple Silicon：rust-ssh-connect-macos-aarch64
@@ -420,7 +420,7 @@ sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD
 
 `*.token.disabled` 不会被 relay 当作设备 token 读取；需要恢复时再改回 `.token` 文件名，等待约 2 秒即可生效。
 
-### 7.3 从 v0.3 升级到 v0.4.2
+### 7.3 从 v0.3 升级到当前版本
 
 服务器升级时保留：
 
@@ -434,7 +434,7 @@ sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD
 sudo systemctl restart rust-ssh-relay
 ```
 
-旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows client/connect 从 v0.4.2 起使用 MSI；安装新 MSI 会覆盖升级程序，但保留 `%APPDATA%\rust-ssh` 配置。
+旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows client/connect 使用 MSI；安装新 MSI 会覆盖升级程序，但保留 `%APPDATA%\rust-ssh` 配置。
 
 ### 7.4 替换 controller token
 
