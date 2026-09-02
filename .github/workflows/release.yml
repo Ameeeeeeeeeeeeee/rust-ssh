@@ -70,7 +70,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - name: Build Windows GUI binary
         shell: pwsh
-        run: cargo build --release --locked --target x86_64-pc-windows-msvc --features desktop --bin "${{ matrix.binary }}"
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc --features desktop --bin "${{ matrix.binary }}" --bin rust-ssh-installer-helper
       - name: Install WiX
         shell: pwsh
         run: |
@@ -82,9 +82,10 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
           $binaryPath = (Resolve-Path "target\x86_64-pc-windows-msvc\release\${{ matrix.binary }}.exe").Path
+          $helperPath = (Resolve-Path "target\x86_64-pc-windows-msvc\release\rust-ssh-installer-helper.exe").Path
           $iconPath = (Resolve-Path "packaging\windows\rust-ssh.ico").Path
           New-Item -ItemType Directory -Force dist | Out-Null
-          & "$env:RUNNER_TEMP\wix\wix.exe" build -arch x64 -culture zh-CN -culture en-US -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -d "ProductVersion=$version" -d "BinaryPath=$binaryPath" -d "IconPath=$iconPath" "packaging\windows\${{ matrix.wxs }}" -out "dist\${{ matrix.output }}"
+          & "$env:RUNNER_TEMP\wix\wix.exe" build -arch x64 -culture zh-CN -culture en-US -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -d "ProductVersion=$version" -d "BinaryPath=$binaryPath" -d "InstallerHelperPath=$helperPath" -d "IconPath=$iconPath" "packaging\windows\${{ matrix.wxs }}" -out "dist\${{ matrix.output }}"
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ssh-${{ matrix.name }}-msi

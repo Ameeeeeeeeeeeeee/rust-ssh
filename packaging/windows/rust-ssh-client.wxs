@@ -2,7 +2,8 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Rust-SSH-Client" Manufacturer="Rust-SSH" Version="$(var.ProductVersion)" Scope="perMachine" UpgradeCode="9F2A0E95-7C8C-4D98-8B76-AF3C5DBA5E11">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Rust-SSH-Client is already installed." />
-    <util:CloseApplication Id="CloseRustSshClient" Target="rust-ssh-client.exe" Description="Rust-SSH-Client 正在运行。选择“忽略”将强制关闭它并继续安装；选择“重试”可在手动关闭后再次检查；选择“中止”取消安装。" CloseMessage="no" PromptToContinue="yes" TerminateProcess="1" RebootPrompt="no" Timeout="1" />
+    <Binary Id="RustSshInstallerHelper" SourceFile="$(var.InstallerHelperPath)" />
+    <CustomAction Id="CheckAndCloseRustSshClient" BinaryRef="RustSshInstallerHelper" ExeCommand="client" Execute="immediate" Return="check" />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="RustSshIcon" SourceFile="$(var.IconPath)" />
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
@@ -14,6 +15,10 @@
   </Package>
 
   <Fragment>
+    <InstallExecuteSequence>
+      <Custom Action="CheckAndCloseRustSshClient" Before="InstallValidate" />
+    </InstallExecuteSequence>
+
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Client">
         <Directory Id="DataFolder" Name="data" />
