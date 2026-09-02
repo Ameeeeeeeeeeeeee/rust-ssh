@@ -45,7 +45,8 @@ relay 启动时读取：
 - 不存在全局 agent token，也没有回退路径；
 - 单个 agent token 泄露只能注册或伪装对应设备，不能 list 或连接其他设备；
 - controller token 是服务器的主控密钥，泄露后可 list 和连接所有设备，绝不能分发给 client；
-- 设备 token 在 relay 启动时加载，新增、删除或修改后重启 relay 生效；
+- 设备 token 和 controller token 在 relay 启动时加载，并每约 2 秒自动热加载；新增、删除或修改文件通常不需要重启 relay；
+- 如果热加载时发现文件暂时不存在或内容无效，relay 会保留上一份有效配置，避免半写入文件导致服务失效；已建立的连接不会被强制断开；
 - v0.4 起，client 首次启动时生成 `rssh-` 开头的随机设备 ID，并保存在本机配置中；它与 Windows 计算机名无关，也不会因修改计算机名而改变。
 
 Hello wire 格式、Noise、控制帧格式和 bridge 未改变；设备配置码新增了可选的设备 ID 绑定字段，旧的 controller 配置码仍可解码。
@@ -121,6 +122,14 @@ rust-ssh.exe agent --server 198.51.100.10:24443 --server-key C:\ProgramData\rust
 rust-ssh list --server 198.51.100.10:24443 --server-key ~/.config/rust-ssh/server-identity.pub --token-file ~/.config/rust-ssh/controller.token
 ```
 
+查看服务器上实际保存的 controller/device 配置（默认隐藏 token 内容）：
+
+```bash
+rust-ssh inventory --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
+```
+
+只有在服务器本地可信终端上排查时，才追加 `--show-tokens`。connect 实例不会单独登记；它们共享 controller token，因此 inventory 能显示 token 文件和设备注册情况，但不能知道有多少台 connect 保存过配置码。
+
 ## Build
 
 源码构建需要 Rust stable、Cargo 和 Git；运行 Release 二进制不需要 Rust。
@@ -152,16 +161,15 @@ cargo build --release --locked --features desktop --bin rust-ssh-connect
 
 ```text
 rust-ssh-relay-linux-x86_64
-rust-ssh-agent-windows-x86_64.exe
-rust-ssh-client-windows-x86_64.exe
-rust-ssh-connect-windows-x86_64.exe
+rust-ssh-client-windows-x86_64.msi
+rust-ssh-connect-windows-x86_64.msi
 rust-ssh-connect-macos-aarch64
 ```
 
-编译文件不会进入 Git 源码仓库，`target/` 已被 `.gitignore` 忽略。
+Windows Release 只提供 MSI 安装包，不单独提供便携版 `.exe`；MSI 内部包含对应程序，并支持覆盖安装新版本。Windows agent 的命令行程序仍可从源码编译，但不会作为 Release 附件发布。编译文件不会进入 Git 源码仓库，`target/` 已被 `.gitignore` 忽略。
 
 ## Security scope
 
 公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token、未知设备拒绝和单设备单会话限制。
 
-当前明确不包含：IP 限速、失败封禁、ACL、token 热吊销、审计、BitLocker 和证书体系。
+当前明确不包含：IP 限速、失败封禁、细粒度 ACL、审计、BitLocker、证书体系和自动下载新版本。修改 token 文件后的新认证会热加载；已经建立的会话不会被强制断开。

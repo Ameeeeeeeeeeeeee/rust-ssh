@@ -26,6 +26,8 @@ enum Command {
     /// Manage persistent controlled-device registrations.
     #[command(subcommand)]
     Device(DeviceCommand),
+    /// Show the server's configured controller and device token inventory.
+    Inventory(InventoryArgs),
     /// List online controlled devices.
     List(ListArgs),
     /// Connect stdin/stdout to a controlled device; designed for SSH ProxyCommand.
@@ -102,6 +104,27 @@ struct DeviceAddArgs {
 }
 
 #[derive(Debug, Args)]
+struct InventoryArgs {
+    /// File containing the controller token.
+    #[arg(
+        long,
+        env = "RUST_SSH_CONTROLLER_TOKEN_FILE",
+        default_value = "/etc/rust-ssh/controller.token"
+    )]
+    controller_token_file: PathBuf,
+    /// Directory containing one <device_id>.token file per controlled device.
+    #[arg(
+        long,
+        env = "RUST_SSH_DEVICES_DIR",
+        default_value = "/etc/rust-ssh/devices"
+    )]
+    devices_dir: PathBuf,
+    /// Print secret values. Use only on a trusted server terminal.
+    #[arg(long)]
+    show_tokens: bool,
+}
+
+#[derive(Debug, Args)]
 struct ClientCommonArgs {
     /// Relay endpoint as an IP:port, for example 198.51.100.10:24443.
     #[arg(long, env = "RUST_SSH_SERVER")]
@@ -169,10 +192,7 @@ async fn main() -> Result<()> {
             server::run(server::Config {
                 listen: args.listen,
                 identity_key: args.identity_key,
-                controller_token: resolve_token_file(
-                    &args.controller_token_file,
-                    "controller token",
-                )?,
+                controller_token_file: args.controller_token_file,
                 devices_dir: args.devices_dir,
             })
             .await
@@ -187,6 +207,27 @@ async fn main() -> Result<()> {
             println!("registered device: {}", args.device_id);
             println!("copy the following pairing code to that client:");
             println!("{pairing_code}");
+            Ok(())
+        }
+        Command::Inventory(args) => {
+            let inventory = server::inventory(&args.controller_token_file, &args.devices_dir)?;
+            println!(
+                "controller token file: {}",
+                inventory.controller_token_path.display()
+            );
+            if args.show_tokens {
+                println!("controller token: {}", inventory.controller_token);
+            } else {
+                println!("controller token: <hidden> (use --show-tokens on a trusted terminal)");
+            }
+            println!("configured devices: {}", inventory.devices.len());
+            for device in inventory.devices {
+                println!("- {}: {}", device.device_id, device.path.display());
+                if args.show_tokens {
+                    println!("  token: {}", device.token);
+                }
+            }
+            println!("connect endpoints: not stored; they use the controller token and are not registered individually");
             Ok(())
         }
         Command::Agent(args) => {
@@ -224,12 +265,6 @@ async fn main() -> Result<()> {
             .await
         }
     }
-}
-
-fn resolve_token_file(path: &std::path::Path, label: &str) -> Result<String> {
-    let value = fs::read_to_string(path)
-        .map_err(|error| anyhow::anyhow!("reading {label} file {}: {error}", path.display()))?;
-    resolve_token_value(value, label)
 }
 
 fn resolve_token(token: Option<String>, token_file: Option<PathBuf>) -> Result<String> {

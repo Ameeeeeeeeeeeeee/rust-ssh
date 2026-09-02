@@ -1,4 +1,6 @@
 /target/
+/dist/
+/dist-test/
 .cargo-home/
 *.log
 .env

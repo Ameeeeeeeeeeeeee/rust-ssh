@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
-use tokio::time::{timeout, Duration};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock, Semaphore};
+use tokio::time::{timeout, Duration, MissedTickBehavior};
 use tracing::{info, warn};
 
 const MAX_CONNECTIONS: usize = 128;
@@ -25,14 +25,33 @@ const MAX_TOKEN_BYTES: usize = 4096;
 pub struct Config {
     pub listen: String,
     pub identity_key: PathBuf,
-    pub controller_token: String,
+    pub controller_token_file: PathBuf,
     pub devices_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AuthSnapshot {
+    controller_token: Arc<str>,
+    device_tokens: HashMap<String, Arc<str>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenRecord {
+    pub device_id: String,
+    pub path: PathBuf,
+    pub token: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Inventory {
+    pub controller_token_path: PathBuf,
+    pub controller_token: String,
+    pub devices: Vec<TokenRecord>,
 }
 
 #[derive(Clone)]
 struct State {
-    controller_token: Arc<str>,
-    device_tokens: Arc<HashMap<String, Arc<str>>>,
+    auth: Arc<RwLock<AuthSnapshot>>,
     devices: Arc<Mutex<HashMap<String, Arc<Device>>>>,
     identity: Arc<ServerIdentity>,
     connections: Arc<Semaphore>,
@@ -50,25 +69,29 @@ struct OpenRequest {
 
 pub async fn run(config: Config) -> Result<()> {
     let identity = Arc::new(ServerIdentity::load(&config.identity_key)?);
-    let controller_token = Arc::from(validate_token(
-        &config.controller_token,
-        "controller token",
-    )?);
-    let device_tokens = Arc::new(load_device_tokens(&config.devices_dir)?);
+    let auth = Arc::new(RwLock::new(load_auth_snapshot(
+        &config.controller_token_file,
+        &config.devices_dir,
+    )?));
     let listener = TcpListener::bind(&config.listen)
         .await
         .with_context(|| format!("binding relay listener {}", config.listen))?;
     let state = State {
-        controller_token,
-        device_tokens: device_tokens.clone(),
+        auth: auth.clone(),
         devices: Arc::new(Mutex::new(HashMap::new())),
         identity,
         connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
     };
+    spawn_auth_reload(
+        auth,
+        config.controller_token_file.clone(),
+        config.devices_dir.clone(),
+    );
 
+    let configured_devices = state.auth.read().await.device_tokens.len();
     info!(
         listen = %config.listen,
-        configured_devices = device_tokens.len(),
+        configured_devices,
         max_connections = MAX_CONNECTIONS,
         "rust-ssh relay is listening"
     );
@@ -139,6 +162,51 @@ pub fn add_device(
     Ok(pairing_code)
 }
 
+fn load_auth_snapshot(controller_token_file: &Path, devices_dir: &Path) -> Result<AuthSnapshot> {
+    let controller_token = fs::read_to_string(controller_token_file).with_context(|| {
+        format!(
+            "reading controller token file {}",
+            controller_token_file.display()
+        )
+    })?;
+    let controller_token = Arc::<str>::from(validate_token(&controller_token, "controller token")?);
+    let device_tokens = load_device_tokens(devices_dir)?;
+    Ok(AuthSnapshot {
+        controller_token,
+        device_tokens,
+    })
+}
+
+fn spawn_auth_reload(
+    auth: Arc<RwLock<AuthSnapshot>>,
+    controller_token_file: PathBuf,
+    devices_dir: PathBuf,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            match load_auth_snapshot(&controller_token_file, &devices_dir) {
+                Ok(next) => {
+                    let mut current = auth.write().await;
+                    if *current != next {
+                        let device_count = next.device_tokens.len();
+                        *current = next;
+                        info!(
+                            configured_devices = device_count,
+                            "reloaded rust-ssh token configuration"
+                        );
+                    }
+                }
+                Err(error) => {
+                    warn!(%error, "could not reload token configuration; keeping the last valid snapshot");
+                }
+            }
+        }
+    });
+}
+
 async fn handle_connection(mut stream: RelayStream, state: State) -> Result<()> {
     let hello = read_frame(&mut stream).await?;
     let (version, role, device_id, token) = match hello {
@@ -156,13 +224,16 @@ async fn handle_connection(mut stream: RelayStream, state: State) -> Result<()> 
             "unsupported protocol version {version}; expected {PROTOCOL_VERSION}"
         ));
     }
-    authenticate(
-        &role,
-        device_id.as_deref(),
-        &token,
-        &state.controller_token,
-        state.device_tokens.as_ref(),
-    )?;
+    {
+        let auth = state.auth.read().await;
+        authenticate(
+            &role,
+            device_id.as_deref(),
+            &token,
+            &auth.controller_token,
+            &auth.device_tokens,
+        )?;
+    }
     write_frame(&mut stream, &Message::HelloOk).await?;
 
     match role {
@@ -208,9 +279,16 @@ fn authenticate(
 }
 
 fn load_device_tokens(directory: &Path) -> Result<HashMap<String, Arc<str>>> {
+    Ok(load_device_token_records(directory)?
+        .into_iter()
+        .map(|record| (record.device_id, Arc::<str>::from(record.token)))
+        .collect())
+}
+
+fn load_device_token_records(directory: &Path) -> Result<Vec<TokenRecord>> {
     let entries = fs::read_dir(directory)
         .with_context(|| format!("reading device token directory {}", directory.display()))?;
-    let mut tokens = HashMap::new();
+    let mut records = Vec::new();
     for entry in entries {
         let entry = entry
             .with_context(|| format!("reading device token directory {}", directory.display()))?;
@@ -237,14 +315,35 @@ fn load_device_tokens(directory: &Path) -> Result<HashMap<String, Arc<str>>> {
         let token = fs::read_to_string(&path)
             .with_context(|| format!("reading device token {}", path.display()))?;
         let token = validate_token(&token, &format!("device token for {device_id}"))?;
-        if tokens
-            .insert(device_id.to_owned(), Arc::<str>::from(token))
-            .is_some()
+        if records
+            .iter()
+            .any(|record: &TokenRecord| record.device_id == device_id)
         {
             return Err(anyhow!("duplicate device token for {device_id}"));
         }
+        records.push(TokenRecord {
+            device_id: device_id.to_owned(),
+            path,
+            token,
+        });
     }
-    Ok(tokens)
+    records.sort_by(|left, right| left.device_id.cmp(&right.device_id));
+    Ok(records)
+}
+
+pub fn inventory(controller_token_file: &Path, devices_dir: &Path) -> Result<Inventory> {
+    let controller_token = fs::read_to_string(controller_token_file).with_context(|| {
+        format!(
+            "reading controller token file {}",
+            controller_token_file.display()
+        )
+    })?;
+    let controller_token = validate_token(&controller_token, "controller token")?;
+    Ok(Inventory {
+        controller_token_path: controller_token_file.to_owned(),
+        controller_token,
+        devices: load_device_token_records(devices_dir)?,
+    })
 }
 
 fn validate_token(token: &str, label: &str) -> Result<String> {
@@ -577,6 +676,7 @@ mod tests {
         let devices_dir = root.join("devices");
         let identity_key = root.join("identity.key");
         let identity_public = root.join("identity.pub");
+        let controller_token_path = root.join("controller.token");
         let device_id = "rssh-0123456789abcdef0123456789abcdef";
 
         crate::identity::generate(&identity_key, &identity_public).unwrap();
@@ -593,6 +693,11 @@ mod tests {
         let token_path = devices_dir.join(format!("{device_id}.token"));
         let token = fs::read_to_string(&token_path).unwrap();
         assert_eq!(token.trim().len(), 64);
+        crate::identity::write_token(&controller_token_path, CONTROLLER_TOKEN).unwrap();
+        let inventory = inventory(&controller_token_path, &devices_dir).unwrap();
+        assert_eq!(inventory.devices.len(), 1);
+        assert_eq!(inventory.devices[0].device_id, device_id);
+        assert_eq!(inventory.devices[0].token, token.trim());
         assert!(add_device(
             &devices_dir,
             device_id,

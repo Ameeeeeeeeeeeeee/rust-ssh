@@ -10,6 +10,15 @@ use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
+pub enum Status {
+    Connecting,
+    Connected,
+    Retrying(String),
+    Stopped,
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub server: String,
     pub server_key: [u8; crate::identity::STATIC_KEY_SIZE],
@@ -43,27 +52,61 @@ pub async fn run(config: Config) -> Result<()> {
     run_until_stopped(config, stop_rx).await
 }
 
-pub async fn run_until_stopped(config: Config, mut stop: oneshot::Receiver<()>) -> Result<()> {
-    validate_target(&config.target)?;
+pub async fn run_until_stopped(config: Config, stop: oneshot::Receiver<()>) -> Result<()> {
+    run_until_stopped_inner(config, stop, None).await
+}
+
+pub async fn run_until_stopped_with_status(
+    config: Config,
+    stop: oneshot::Receiver<()>,
+    status: std::sync::mpsc::Sender<Status>,
+) -> Result<()> {
+    run_until_stopped_inner(config, stop, Some(status)).await
+}
+
+async fn run_until_stopped_inner(
+    config: Config,
+    mut stop: oneshot::Receiver<()>,
+    status: Option<std::sync::mpsc::Sender<Status>>,
+) -> Result<()> {
+    if let Err(error) = validate_target(&config.target) {
+        report_status(&status, Status::Failed(error.to_string()));
+        return Err(error);
+    }
     let mut delay = Duration::from_secs(1);
     loop {
+        report_status(&status, Status::Connecting);
         let run_result = tokio::select! {
-            result = run_once(&config) => Some(result),
-            _ = &mut stop => return Ok(()),
+            result = run_once(&config, status.as_ref()) => Some(result),
+            _ = &mut stop => {
+                report_status(&status, Status::Stopped);
+                return Ok(());
+            },
         };
         match run_result.expect("agent run result must be present") {
             Ok(()) => {
                 warn!("agent session ended; reconnecting");
+                report_status(&status, Status::Retrying("连接已断开，正在重试".to_owned()));
             }
             Err(error) => {
                 warn!(%error, "agent connection failed; reconnecting");
+                report_status(&status, Status::Retrying(error.to_string()));
             }
         }
         tokio::select! {
             _ = sleep(delay) => {}
-            _ = &mut stop => return Ok(()),
+            _ = &mut stop => {
+                report_status(&status, Status::Stopped);
+                return Ok(());
+            },
         }
         delay = std::cmp::min(delay.saturating_mul(2), Duration::from_secs(30));
+    }
+}
+
+fn report_status(status: &Option<std::sync::mpsc::Sender<Status>>, update: Status) {
+    if let Some(sender) = status {
+        let _ = sender.send(update);
     }
 }
 
@@ -79,7 +122,7 @@ fn validate_target(target: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_once(config: &Config) -> Result<()> {
+async fn run_once(config: &Config, status: Option<&std::sync::mpsc::Sender<Status>>) -> Result<()> {
     let mut stream = noise::client_connect(&config.server, &config.server_key).await?;
     write_frame(
         &mut stream,
@@ -92,6 +135,9 @@ async fn run_once(config: &Config) -> Result<()> {
     )
     .await?;
     expect_hello_ok(&mut stream).await?;
+    if let Some(sender) = status {
+        let _ = sender.send(Status::Connected);
+    }
     info!(device = %config.device_id, target = %config.target, "agent connected to relay");
 
     loop {

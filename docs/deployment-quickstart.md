@@ -26,12 +26,12 @@ SERVER_IP=198.51.100.10
 export SERVER_IP
 ```
 
-下载 v0.4.1 relay 和 systemd 服务：
+下载 v0.4.2 relay 和 systemd 服务：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.1/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.2/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.1/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.2/examples/rust-ssh-relay.service
 ```
 
 创建服务账户、目录和服务器身份：
@@ -82,11 +82,13 @@ sudo systemctl status rust-ssh-relay --no-pager
 
 ## 2. 部署 Windows client
 
-从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
+从 [v0.4.2 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.2) 下载并安装 MSI：
 
 ```text
-rust-ssh-client-windows-x86_64.exe
+rust-ssh-client-windows-x86_64.msi
 ```
+
+MSI 会把 client 安装到 Windows 的程序目录，并创建开始菜单入口；Release 不提供单独的 Windows `.exe`。双击开始菜单里的 rust-ssh client 即可。
 
 第一次打开 client 时，界面会显示一串类似下面的设备 ID：
 
@@ -130,12 +132,12 @@ sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERV
 1. 在服务器创建 `/etc/rust-ssh/devices/<设备ID>.token`；
 2. 输出只属于这台设备的 `rssh1:...` 配置码。
 
-复制输出的整行配置码，粘贴回这台 Windows client 的“配置码”框。点击“保存”→“启动”，窗口保持打开。按当前设计，client 不自动开机启动；关闭窗口就会停止。
+复制输出的整行配置码，粘贴回这台 Windows client 的“配置码”框。点击“保存”→“启动”。状态显示绿色“已连接服务器”后，client 就在等待 SSH 连接；它不会自动开机启动。关闭窗口只会隐藏到右下角托盘，右键托盘图标选择“关闭”才会停止。
 
-登记新设备后需要让 relay 重新读取 token：
+relay 会自动读取新的 token，通常等待约 2 秒即可，不需要重启服务。可以在服务器查看注册情况：
 
 ```bash
-sudo systemctl restart rust-ssh-relay
+sudo /usr/local/bin/rust-ssh inventory --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
 ```
 
 ## 4. 部署 Mac / Windows connect
@@ -148,11 +150,11 @@ sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key 
 
 这份配置码拥有查看和连接所有已登记设备的权限，只交给可信的主控端。不要粘贴给 client。
 
-从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
+从 [v0.4.2 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.2) 下载：
 
 ```text
 macOS Apple Silicon：rust-ssh-connect-macos-aarch64
-Windows x86-64：rust-ssh-connect-windows-x86_64.exe
+Windows x86-64：rust-ssh-connect-windows-x86_64.msi
 ```
 
 macOS 首次运行前执行：
@@ -161,19 +163,23 @@ macOS 首次运行前执行：
 chmod +x rust-ssh-connect-macos-aarch64
 ```
 
+Windows 双击 MSI 安装，然后从开始菜单打开 rust-ssh connect。
+
 打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。依次点击：
 
 ```text
 刷新设备 → 选择设备 → 配置 SSH
 ```
 
-之后可以在 Terminal 或 VS Code Remote-SSH 中使用生成的主机名。示例设备 ID 下的命令是：
+之后可以在 Terminal 或 VS Code Remote-SSH 中直接使用 Host 昵称。默认昵称就是设备 ID，示例命令是：
 
 ```bash
-ssh rust-ssh-rssh-0123456789abcdef0123456789abcdef
+ssh rssh-0123456789abcdef0123456789abcdef
 ```
 
-connect 可以关闭；Windows client 必须保持运行。
+如果想改昵称，在设备列表中右键设备，选择“设置 Host 昵称”，保存后重新点击“配置 SSH”。以后直接执行 `ssh 你设置的昵称` 即可；SSH 配置中的 ProxyCommand 是内部实现，不需要手写。
+
+connect 只负责生成 SSH 配置和启动内部代理，配置完成后可以关闭；Windows client 必须保持托盘运行并显示绿色已连接状态。
 
 ## 5. 只要记住这四点
 

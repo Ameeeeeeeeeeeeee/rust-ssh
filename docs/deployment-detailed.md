@@ -54,12 +54,12 @@ export SERVER_IP
 ssh relay-server
 ```
 
-下载 v0.4.1 的 Linux relay 和 systemd 服务文件：
+下载 v0.4.2 的 Linux relay 和 systemd 服务文件：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.1/rust-ssh-relay-linux-x86_64
+sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/download/v0.4.2/rust-ssh-relay-linux-x86_64
 sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.1/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/v0.4.2/examples/rust-ssh-relay.service
 ```
 
 如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
@@ -166,11 +166,13 @@ sudo ufw allow 24443/tcp
 
 ### 3.1 下载并首次打开
 
-从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
+从 [v0.4.2 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.2) 下载并安装 MSI：
 
 ```text
-rust-ssh-client-windows-x86_64.exe
+rust-ssh-client-windows-x86_64.msi
 ```
+
+Release 不提供单独的 Windows `.exe`。MSI 会把 client 安装到 Windows 程序目录并创建开始菜单入口；以后安装更高版本 MSI 可以覆盖升级，不会自动清除 `%APPDATA%\rust-ssh\client.json`。
 
 第一次打开时，client GUI 会显示类似下面的设备 ID：
 
@@ -234,11 +236,13 @@ sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERV
 
 复制命令输出的整行 `rssh1:...` 配置码，暂时不要发到公共聊天或提交 GitHub。它包含设备 token，只交给对应的 Windows client。
 
-让 relay 读取新 token：
+relay 会自动读取新的 token，通常等待约 2 秒即可，不需要重启服务。服务器可以用下面的命令查看当前保存的设备和 token 文件：
 
 ```bash
-sudo systemctl restart rust-ssh-relay
+sudo /usr/local/bin/rust-ssh inventory --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
 ```
+
+默认不会打印 token 内容；只有在服务器本地可信终端排查时才追加 `--show-tokens`。这个命令不会显示曾经使用过配置码的 connect 数量，因为多个 connect 共享同一个 controller token，server 不保存 connect 的单独登记。
 
 ### 3.4 在 client 中完成配置
 
@@ -250,7 +254,14 @@ sudo systemctl restart rust-ssh-relay
 | 设备 ID | UI 已生成并显示的 ID，不需要修改 |
 | 本地 SSH | 默认 `127.0.0.1:22` |
 
-点击“保存”→“启动”。成功后状态会显示正在连接服务器。让这个窗口保持打开；关闭窗口会停止 client。
+点击“保存”→“启动”。状态的含义是：
+
+- 黄色“正在连接”：正在建立 Noise/relay 连接；
+- 绿色“已连接服务器”：relay 已认证通过，正在等待 SSH；
+- 黄色“连接中断，正在重试”：网络或服务器暂时不可用，client 会自动重连；
+- 红色“连接失败”：配置或本地参数有误，需要检查提示。
+
+client 不自动开机启动。关闭窗口只会隐藏到 Windows 右下角托盘，client 仍会运行；右键托盘图标选择“关闭”才会真正停止。托盘图标颜色与上述连接状态一致。
 
 client 只会把服务器中继过来的连接转发到本机 loopback 地址。即使配置了其他局域网，client 也不会把它们作为目标暴露给主控端。
 
@@ -270,11 +281,11 @@ controller 只有一个 token 文件，但可以有多个 connect 实例使用�
 
 ### 4.2 下载并打开 connect
 
-从 [v0.4.1 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.1) 下载：
+从 [v0.4.2 Release](https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/tag/v0.4.2) 下载：
 
 ```text
 macOS Apple Silicon：rust-ssh-connect-macos-aarch64
-Windows x86-64：rust-ssh-connect-windows-x86_64.exe
+Windows x86-64：rust-ssh-connect-windows-x86_64.msi
 ```
 
 Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装 Rust。macOS 下载后如没有执行权限，执行：
@@ -282,6 +293,8 @@ Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装
 ```bash
 chmod +x rust-ssh-connect-macos-aarch64
 ```
+
+Windows 双击 MSI 安装，然后从开始菜单打开 rust-ssh connect。MSI 安装路径会被 GUI 自动写入 SSH 配置；不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
 
 主控端还需要系统 OpenSSH。检查：
 
@@ -317,15 +330,17 @@ macOS：~/.ssh/config
 Windows：%USERPROFILE%\.ssh\config
 ```
 
-示例设备 ID 下，直接使用：
+示例设备 ID 下，默认 Host 昵称就是设备 ID，直接使用：
 
 ```bash
-ssh rust-ssh-rssh-0123456789abcdef0123456789abcdef
+ssh rssh-0123456789abcdef0123456789abcdef
 ```
+
+在设备列表上右键可以选择“设置 Host 昵称”。昵称只允许字母、数字、点、下划线和短横线；保存后再次点击“配置 SSH”，以后就可以直接执行 `ssh 你设置的昵称`。SSH 配置中那条较长的 `ProxyCommand` 是内部实现，不需要手写，正常使用时只输入 `ssh Host昵称`。
 
 也可以在 VS Code Remote-SSH 中选择同名主机。第一次 SSH 登录时，输入 Windows OpenSSH 用户的密码，或使用该 Windows 用户已经配置好的 SSH 公钥。
 
-配置完成后，connect GUI 可以关闭，因为 SSH 会通过 SSH `ProxyCommand` 自动调用 connect 的内部代理模式。但是 Windows client 必须继续运行；如果移动或删除 connect 可执行文件，需要重新打开 GUI 并再次点击“配置 SSH”。
+配置完成后，connect GUI 可以关闭，因为 SSH 会通过 SSH `ProxyCommand` 自动调用 connect 的内部代理模式。但是 Windows client 必须继续运行；如果移动或卸载 connect，需要重新安装/打开 connect 并再次点击“配置 SSH”。
 
 ## 5. 配置文件和密钥分别放在哪里
 
@@ -362,7 +377,7 @@ Windows：%APPDATA%\rust-ssh\connect.json
 
 1. 打开新 Windows client，复制 UI 显示的新设备 ID；
 2. 服务器执行 `rust-ssh device add --device-id <新ID> ...`；
-3. 重启 relay；
+3. 等待约 2 秒，让 relay 自动热加载 token；
 4. 把输出的设备配置码粘贴到对应 client；
 5. 在 connect 点击“刷新设备”。
 
@@ -394,19 +409,18 @@ Move-Item "$env:APPDATA\rust-ssh\client.json" "$env:APPDATA\rust-ssh\client.json
 
 3. 重新打开 client，它会生成新的随机设备 ID；
 4. 用新 ID 执行一次服务器 `device add`；
-5. 重启 relay，把新配置码粘贴到 client；
-6. 确认新设备在线后，再在服务器移走旧 token，并重启 relay。
+5. 把新配置码粘贴到 client；relay 会自动热加载新的设备 token；
+6. 确认新设备在线后，再在服务器移走旧 token；relay 会自动热加载变更。
 
 移走旧 token 的可恢复写法：
 
 ```bash
 sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token.disabled"
-sudo systemctl restart rust-ssh-relay
 ```
 
-`*.token.disabled` 不会被 relay 当作设备 token 读取；需要恢复时再改回 `.token` 文件名并重启服务。
+`*.token.disabled` 不会被 relay 当作设备 token 读取；需要恢复时再改回 `.token` 文件名，等待约 2 秒即可生效。
 
-### 7.3 从 v0.3 升级到 v0.4
+### 7.3 从 v0.3 升级到 v0.4.2
 
 服务器升级时保留：
 
@@ -420,21 +434,20 @@ sudo systemctl restart rust-ssh-relay
 sudo systemctl restart rust-ssh-relay
 ```
 
-旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。
+旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows client/connect 从 v0.4.2 起使用 MSI；安装新 MSI 会覆盖升级程序，但保留 `%APPDATA%\rust-ssh` 配置。
 
 ### 7.4 替换 controller token
 
-controller token 泄露时，应在服务器生成新 token、重启 relay，并为所有 connect 重新生成配置码。先备份旧文件，再执行：
+controller token 泄露时，应在服务器生成新 token，并为所有 connect 重新生成配置码。先备份旧文件，再执行：
 
 ```bash
 sudo mv /etc/rust-ssh/controller.token /etc/rust-ssh/controller.token.old
 openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null
 sudo chown root:rustssh /etc/rust-ssh/controller.token
 sudo chmod 0640 /etc/rust-ssh/controller.token
-sudo systemctl restart rust-ssh-relay
 ```
 
-然后按第 4.1 节重新生成 controller 配置码。旧 controller 配置码会失效。
+然后按第 4.1 节重新生成 controller 配置码，等待约 2 秒让 relay 热加载。旧 controller 配置码会失效；已经建立的 SSH 会话不会被强制断开。
 
 ## 8. server 和 client 各自暴露什么
 
@@ -453,7 +466,7 @@ server 和 client 之间不是直接暴露 SSH 端口。服务器只中继加密
 - server 会检查协议版本、设备 ID、controller/device token，并限制握手时间、总连接数、帧大小和单设备并发会话。
 - device token 是单设备权限；controller token 是全设备权限。绝不能把 controller 配置码分发给 client。
 - 云安全组和 Ubuntu 防火墙只开放 `24443/tcp`，保持 Ubuntu、Windows OpenSSH 和 rust-ssh Release 更新。
-- 当前版本不包含 IP 限速、失败封禁、细粒度 ACL、审计、token 热加载、BitLocker 或证书体系。
+- 当前版本不包含 IP 限速、失败封禁、细粒度 ACL、审计、BitLocker、证书体系和自动下载新版本；token 文件变更会自动热加载，但只影响新的认证。
 
 ## 10. 常见问题
 

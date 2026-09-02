@@ -1,6 +1,6 @@
 [package]
 name = "rust-ssh"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
@@ -29,6 +29,9 @@ webbrowser = { version = "=1.0.3", optional = true }
 # currently require the Rust 2024 Cargo feature.
 zeroize = "=1.8.2"
 
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "=0.24.2", optional = true }
+
 [features]
 default = []
 desktop = [
@@ -39,4 +42,5 @@ desktop = [
     "dep:unicode-segmentation",
     "dep:url",
     "dep:webbrowser",
+    "dep:tray-icon",
 ]
