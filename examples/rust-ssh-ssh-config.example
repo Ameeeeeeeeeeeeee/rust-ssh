@@ -1,4 +1,4 @@
 Host windows-main
     HostName rust-ssh-proxy-placeholder
     User windows-user
-    ProxyCommand /usr/local/bin/rust-ssh controller --server 198.51.100.10:24443 --server-key /Users/you/.config/rust-ssh/server-identity.pub --token-file /Users/you/.config/rust-ssh/controller.token --target rssh-0123456789abcdef0123456789abcdef
+    ProxyCommand /path/to/rust-ssh-connect --proxy --server 198.51.100.10:24443 --server-key /Users/you/.config/rust-ssh/server-identity.pub --token-file /Users/you/.config/rust-ssh/controller.token --target rssh-0123456789abcdef0123456789abcdef

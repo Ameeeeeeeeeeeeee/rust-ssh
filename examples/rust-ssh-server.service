@@ -1,5 +1,5 @@
 [Unit]
-Description=Rust-SSH-Server
+Description=rust-ssh-server
 After=network-online.target
 Wants=network-online.target
 
@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=simple
 User=rustssh
 Group=rustssh
-EnvironmentFile=/etc/rust-ssh/relay.env
-ExecStart=/usr/local/bin/rust-ssh relay
+EnvironmentFile=/etc/rust-ssh-server/server.env
+ExecStart=/usr/local/bin/rust-ssh-server relay
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

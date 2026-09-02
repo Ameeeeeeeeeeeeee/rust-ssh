@@ -6,14 +6,14 @@
 
 | 端 | 系统 | 程序 | 作用 |
 | --- | --- | --- | --- |
-| 服务器 | Ubuntu | `Rust-SSH-Server`（命令仍为 `rust-ssh relay`） | 保存密钥和 token，负责中继 |
+| 服务器 | Ubuntu | `rust-ssh-server`（运行子命令 `relay`） | 保存密钥和 token，负责中继 |
 | 被控端 | Windows x86-64 | `Rust-SSH-Client`（技术二进制名仍为 `rust-ssh-client`） | 主动连接服务器，并把 SSH 转给本机 |
 | 主控端 | macOS ARM64 或 Windows x86-64 | `Rust-SSH-Connect`（技术二进制名仍为 `rust-ssh-connect`） | 查看在线设备，并发起 SSH |
 
 网络方向只有两条主动连接：
 
 ```text
-Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu Rust-SSH-Server:24443 <──主动 TCP/Noise── Mac/Windows Rust-SSH-Connect
+Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu rust-ssh-server:24443 <──主动 TCP/Noise── Mac/Windows Rust-SSH-Connect
        │                                                               │
        └──本机 127.0.0.1:22                                           └──本机 SSH / VS Code
 ```
@@ -44,9 +44,9 @@ export SERVER_IP
 
 这个变量只在当前终端有效。重新登录后需要再次执行；后面命令请继续在同一个终端执行。
 
-## 2. Ubuntu 服务器部署 relay
+## 2. Ubuntu 服务器部署 rust-ssh-server
 
-### 2.1 下载 relay
+### 2.1 下载 rust-ssh-server
 
 登录服务器：
 
@@ -54,29 +54,31 @@ export SERVER_IP
 ssh relay-server
 ```
 
-下载最新正式版 Rust-SSH-Server 和 systemd 服务文件：
+下载最新正式版 rust-ssh-server 和 systemd 服务文件：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/Rust-SSH-Server-linux-x86_64
-sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /usr/local/bin/rust-ssh-server https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-server-linux-x86_64
+sudo chmod 0755 /usr/local/bin/rust-ssh-server
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-server.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-server.service
 ```
 
 如果服务器不能直接访问 GitHub，可以在另一台电脑下载文件，再通过 `scp` 上传；上传后在服务器执行：
 
 ```bash
-sudo install -m 0755 Rust-SSH-Server-linux-x86_64 /usr/local/bin/rust-ssh
-sudo install -m 0644 rust-ssh-relay.service /etc/systemd/system/rust-ssh-relay.service
+sudo install -m 0755 rust-ssh-server-linux-x86_64 /usr/local/bin/rust-ssh-server
+sudo install -m 0644 rust-ssh-server.service /etc/systemd/system/rust-ssh-server.service
 ```
+
+从 v0.4.5 起，服务器程序、服务名和服务器数据目录统一使用 `rust-ssh-server`。全新部署使用 `/etc/rust-ssh-server`；已有部署请按第 7.3 节迁移目录，不要重新生成 identity 或 token。
 
 ### 2.2 创建服务账户和目录
 
-systemd 会让 relay 以低权限用户 `rustssh` 运行。下面命令可以重复执行：
+systemd 会让 rust-ssh-server 以低权限用户 `rustssh` 运行。下面命令可以重复执行：
 
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin rustssh 2>/dev/null || true
-sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh
-sudo install -d -o root -g rustssh -m 2750 /etc/rust-ssh/devices
+sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh-server
+sudo install -d -o root -g rustssh -m 2750 /etc/rust-ssh-server/devices
 ```
 
 `devices` 目录使用 `2750`，其中的 setgid 位会让新生成的设备 token 继承 `rustssh` 组，保证 relay 能读取它们。
@@ -86,15 +88,15 @@ sudo install -d -o root -g rustssh -m 2750 /etc/rust-ssh/devices
 第一次部署时执行：
 
 ```bash
-sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
+sudo /usr/local/bin/rust-ssh-server keygen --identity-key /etc/rust-ssh-server/identity.key --public-key /etc/rust-ssh-server/identity.pub
 ```
 
 文件用途如下：
 
 | 文件 | 用途 | 能否分发 |
 | --- | --- | --- |
-| `/etc/rust-ssh/identity.key` | Noise 私钥，用于证明服务器身份 | 不能，只留服务器 |
-| `/etc/rust-ssh/identity.pub` | 公钥，写入配置码让端点锁定服务器 | 可以随配置流程使用 |
+| `/etc/rust-ssh-server/identity.key` | Noise 私钥，用于证明服务器身份 | 不能，只留服务器 |
+| `/etc/rust-ssh-server/identity.pub` | 公钥，写入配置码让端点锁定服务器 | 可以随配置流程使用 |
 
 `identity.key` 是长期身份。升级程序、重启服务、重启服务器都保留它；不要再次执行 `keygen`，否则旧配置码中的 server key 会失效。
 
@@ -103,17 +105,17 @@ sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --
 controller token 是主控总钥匙，服务器只生成一份：
 
 ```bash
-sudo test -e /etc/rust-ssh/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null)
+sudo test -e /etc/rust-ssh-server/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh-server/controller.token >/dev/null)
 ```
 
 所有可信的 connect 可以使用同一个 controller 配置码。v0.4 暂不提供每个主控端独立权限；因此 controller token 或其配置码泄露，就等于所有设备的主控权限泄露。
 
-给 relay 设置读取权限：
+给 rust-ssh-server 设置读取权限：
 
 ```bash
-sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub /etc/rust-ssh/controller.token /etc/rust-ssh/devices
-sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token
-sudo chmod 0644 /etc/rust-ssh/identity.pub
+sudo chown root:rustssh /etc/rust-ssh-server/identity.key /etc/rust-ssh-server/identity.pub /etc/rust-ssh-server/controller.token /etc/rust-ssh-server/devices
+sudo chmod 0640 /etc/rust-ssh-server/identity.key /etc/rust-ssh-server/controller.token
+sudo chmod 0644 /etc/rust-ssh-server/identity.pub
 ```
 
 此时还不要手动创建设备 token。v0.4 的正确顺序是先打开 client 取得它的随机设备 ID，再使用 `device add` 注册。
@@ -123,32 +125,32 @@ sudo chmod 0644 /etc/rust-ssh/identity.pub
 创建环境文件：
 
 ```bash
-sudo tee /etc/rust-ssh/relay.env >/dev/null <<'EOF'
+sudo tee /etc/rust-ssh-server/server.env >/dev/null <<'EOF
 RUST_SSH_LISTEN=0.0.0.0:24443
-RUST_SSH_IDENTITY_KEY=/etc/rust-ssh/identity.key
-RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh/controller.token
-RUST_SSH_DEVICES_DIR=/etc/rust-ssh/devices
+RUST_SSH_IDENTITY_KEY=/etc/rust-ssh-server/identity.key
+RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh-server/controller.token
+RUST_SSH_DEVICES_DIR=/etc/rust-ssh-server/devices
 EOF
 ```
 
 这个 heredoc 配置块本身需要换行；除此之外，手册中的命令都可以一行执行。
 
-安装并启动持久化服务：
+安装并启动 rust-ssh-server 持久化服务：
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now rust-ssh-relay
+sudo systemctl enable --now rust-ssh-server
 ```
 
 检查服务：
 
 ```bash
-sudo systemctl status rust-ssh-relay --no-pager
+sudo systemctl status rust-ssh-server --no-pager
 sudo ss -lntp | grep ':24443'
-sudo journalctl -u rust-ssh-relay -n 50 --no-pager
+sudo journalctl -u rust-ssh-server -n 50 --no-pager
 ```
 
-如果服务因为“没有 device token 目录”启动失败，确认 `/etc/rust-ssh/devices` 存在且权限为 `root:rustssh`，然后执行 `sudo systemctl restart rust-ssh-relay`。
+如果服务因为“没有 device token 目录”启动失败，确认 `/etc/rust-ssh-server/devices` 存在且权限为 `root:rustssh`，然后执行 `sudo systemctl restart rust-ssh-server`。
 
 ### 2.6 配置云安全组和 Ubuntu 防火墙
 
@@ -222,13 +224,13 @@ DEVICE_ID=rssh-0123456789abcdef0123456789abcdef
 执行注册命令：
 
 ```bash
-sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --devices-dir /etc/rust-ssh/devices
+sudo /usr/local/bin/rust-ssh-server device add --device-id "$DEVICE_ID" --server "$SERVER_IP:24443" --server-key /etc/rust-ssh-server/identity.pub --devices-dir /etc/rust-ssh-server/devices
 ```
 
 这个命令会：
 
 1. 检查 ID 是否是 v0.4 client 生成的格式；
-2. 在服务器写入 `/etc/rust-ssh/devices/<设备ID>.token`；
+2. 在服务器写入 `/etc/rust-ssh-server/devices/<设备ID>.token`；
 3. 生成只属于这台设备的 token；
 4. 输出绑定了该设备 ID 的 `rssh1:...` 配置码。
 
@@ -239,7 +241,7 @@ sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERV
 relay 会自动读取新的 token，通常等待约 2 秒即可，不需要重启服务。服务器可以用下面的命令查看当前保存的设备和 token 文件：
 
 ```bash
-sudo /usr/local/bin/rust-ssh inventory --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
+sudo /usr/local/bin/rust-ssh-server inventory --controller-token-file /etc/rust-ssh-server/controller.token --devices-dir /etc/rust-ssh-server/devices
 ```
 
 默认不会打印 token 内容；只有在服务器本地可信终端排查时才追加 `--show-tokens`。这个命令不会显示曾经使用过配置码的 connect 数量，因为多个 connect 共享同一个 controller token，server 不保存 connect 的单独登记。
@@ -272,7 +274,7 @@ client 只会把服务器中继过来的连接转发到本机 loopback 地址。
 在服务器执行：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
+sudo /usr/local/bin/rust-ssh-server pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh-server/identity.pub --token-file /etc/rust-ssh-server/controller.token
 ```
 
 输出的整行 `rssh1:...` 是 controller 配置码。它可以列出并连接服务器上所有在线 client，因此不要发给任何被控设备，也不要放进源码仓库。
@@ -348,11 +350,11 @@ ssh rssh-0123456789abcdef0123456789abcdef
 
 | 路径 | 内容 | 保密要求 |
 | --- | --- | --- |
-| `/etc/rust-ssh/identity.key` | 服务器 Noise 私钥 | 只留服务器 |
-| `/etc/rust-ssh/identity.pub` | 服务器 Noise 公钥 | 可随配置码分发 |
-| `/etc/rust-ssh/controller.token` | 主控总 token | 只留服务器，不给 client |
-| `/etc/rust-ssh/devices/<device_id>.token` | 对应设备 token | 只给对应 client |
-| `/etc/rust-ssh/relay.env` | relay 启动变量 | 不含 token 内容，可保留在服务器 |
+| `/etc/rust-ssh-server/identity.key` | 服务器 Noise 私钥 | 只留服务器 |
+| `/etc/rust-ssh-server/identity.pub` | 服务器 Noise 公钥 | 可随配置码分发 |
+| `/etc/rust-ssh-server/controller.token` | 主控总 token | 只留服务器，不给 client |
+| `/etc/rust-ssh-server/devices/<device_id>.token` | 对应设备 token | 只给对应 client |
+| `/etc/rust-ssh-server/server.env` | rust-ssh-server 启动变量 | 不含 token 内容，可保留在服务器 |
 
 ### 5.2 Windows client
 
@@ -378,7 +380,7 @@ Windows 也可以是安装向导中选择的其他目录。安装器只给 `data
 每台设备都重复同一套顺序，不要复用设备 token：
 
 1. 打开新 Windows client，复制 UI 显示的新设备 ID；
-2. 服务器执行 `rust-ssh device add --device-id <新ID> ...`；
+2. 服务器执行 `rust-ssh-server device add --device-id <新ID> ...`；
 3. 等待约 2 秒，让 relay 自动热加载 token；
 4. 把输出的设备配置码粘贴到对应 client；
 5. 在 connect 点击“刷新设备”。
@@ -386,8 +388,8 @@ Windows 也可以是安装向导中选择的其他目录。安装器只给 `data
 服务器上的 token 文件是一台设备一个：
 
 ```text
-/etc/rust-ssh/devices/rssh-设备A.token
-/etc/rust-ssh/devices/rssh-设备B.token
+/etc/rust-ssh-server/devices/rssh-设备A.token
+/etc/rust-ssh-server/devices/rssh-设备B.token
 ```
 
 不同设备的 token 不相同。某一台设备 token 泄露时，攻击者只能尝试以那一个设备 ID 注册，不能使用它列出或连接其他设备。
@@ -417,23 +419,38 @@ Move-Item "<client安装目录>\data\client.json" "<client安装目录>\data\cli
 移走旧 token 的可恢复写法：
 
 ```bash
-sudo mv "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh/devices/$OLD_DEVICE_ID.token.disabled"
+sudo mv "/etc/rust-ssh-server/devices/$OLD_DEVICE_ID.token" "/etc/rust-ssh-server/devices/$OLD_DEVICE_ID.token.disabled"
 ```
 
 `*.token.disabled` 不会被 relay 当作设备 token 读取；需要恢复时再改回 `.token` 文件名，等待约 2 秒即可生效。
 
 ### 7.3 从 v0.3 升级到当前版本
 
-服务器升级时保留：
+服务器升级时保留原目录中的所有身份和认证文件，不要重新运行 `keygen`：
 
 - `identity.key` 和 `identity.pub`；
 - `controller.token`；
-- 已有的 `/etc/rust-ssh/devices/` 目录。
+- 已有的 `/etc/rust-ssh-server/devices/` 目录。
 
-替换 `/usr/local/bin/rust-ssh` 后执行：
+如果当前服务器还是旧版本，且数据仍在 `/etc/rust-ssh`，先停止旧服务并迁移目录：
 
 ```bash
-sudo systemctl restart rust-ssh-relay
+sudo systemctl disable --now rust-ssh-relay
+sudo mv /etc/rust-ssh /etc/rust-ssh-server
+sudo mv /etc/rust-ssh-server/relay.env /etc/rust-ssh-server/server.env
+```
+
+替换 `/usr/local/bin/rust-ssh-server` 后执行：
+
+```bash
+sudo systemctl restart rust-ssh-server
+```
+
+安装并启用新的 `rust-ssh-server.service`；不要让新旧两个服务同时占用 `24443`：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now rust-ssh-server
 ```
 
 旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows Rust-SSH-Client/Rust-SSH-Connect 使用 MSI；新版本首次启动时会把旧版 `%APPDATA%\rust-ssh` 或旧 MSI 的默认 `LocalAppData` 配置迁移到当前安装目录的 `data` 文件夹。
@@ -443,17 +460,17 @@ sudo systemctl restart rust-ssh-relay
 controller token 泄露时，应在服务器生成新 token，并为所有 connect 重新生成配置码。先备份旧文件，再执行：
 
 ```bash
-sudo mv /etc/rust-ssh/controller.token /etc/rust-ssh/controller.token.old
-openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null
-sudo chown root:rustssh /etc/rust-ssh/controller.token
-sudo chmod 0640 /etc/rust-ssh/controller.token
+sudo mv /etc/rust-ssh-server/controller.token /etc/rust-ssh-server/controller.token.old
+openssl rand -hex 32 | sudo tee /etc/rust-ssh-server/controller.token >/dev/null
+sudo chown root:rustssh /etc/rust-ssh-server/controller.token
+sudo chmod 0640 /etc/rust-ssh-server/controller.token
 ```
 
 然后按第 4.1 节重新生成 controller 配置码，等待约 2 秒让 relay 热加载。旧 controller 配置码会失效；已经建立的 SSH 会话不会被强制断开。
 
 ### 7.5 清理旧版 Windows 文件
 
-v0.4.4 起，Windows 默认安装目录是：
+v0.4.5 起，Windows 默认安装目录是：
 
 ```text
 C:\Program Files\Rust-SSH-Client
@@ -468,7 +485,50 @@ C:\Program Files\Rust-SSH-Connect
 4. `%APPDATA%\rust-ssh` 里的旧配置确认已迁移后再删除；如果不确定，先保留它；
 5. 不要删除 `%USERPROFILE%\.ssh\config` 整个文件。若要清理旧 SSH 条目，只删除 `# >>> rust-ssh managed begin >>>` 到 `# <<< rust-ssh managed end <<<` 之间的区块，其他 SSH 配置要保留。
 
-如果安装器显示 `C:\Program Files\rust-ssh-client`，这和 `C:\Program Files\Rust-SSH-Client` 是同一个 Windows 路径（Windows 不区分大小写）；v0.4.4 会通过管理员权限正常使用它。v0.4.3 是一次性的旧“当前用户安装”版本；若 Windows 不自动升级它，卸载旧 v0.4.3 后再安装 v0.4.4 即可，配置文件不会因为卸载而被程序主动删除。
+如果安装器显示 `C:\Program Files\rust-ssh-client`，这和 `C:\Program Files\Rust-SSH-Client` 是同一个 Windows 路径（Windows 不区分大小写）；v0.4.5 会通过管理员权限正常使用它。v0.4.3 是一次性的旧“当前用户安装”版本；若 Windows 不自动升级它，卸载旧 v0.4.3 后再安装 v0.4.5 即可，配置文件不会因为卸载而被程序主动删除。
+
+### 7.6 清理 Linux 服务器上的旧程序和缓存
+
+先确认新服务已经正常运行：
+
+```bash
+sudo systemctl is-active rust-ssh-server
+```
+
+只有输出 `active` 后，才清理旧的程序和服务文件：
+
+```bash
+sudo systemctl disable --now rust-ssh-relay
+sudo rm -f /usr/local/bin/rust-ssh
+sudo rm -f /etc/systemd/system/rust-ssh-relay.service
+sudo systemctl daemon-reload
+```
+
+再检查临时下载文件，只删除你确认过的旧文件或目录，不要删除整个 `/tmp`：
+
+```bash
+find /tmp -maxdepth 1 -mindepth 1 -name 'rust-ssh-*' -print
+```
+
+例如确认无误后可以删除旧安装包目录：
+
+```bash
+sudo rm -rf /tmp/rust-ssh-v0.4.2
+```
+
+如果服务器上曾经用源码编译过，也可以在确认不再需要源码后删除对应项目目录中的 `target` 文件夹。Rust 的 Cargo 缓存（`~/.cargo`）和系统日志不是 rust-ssh 运行必需项，不要为了清理而删除正在使用的 Rust 工具链；系统日志空间不足时再按需执行 `sudo journalctl --vacuum-time=14d`。
+
+下面这些不是缓存，不能删除：
+
+```text
+/etc/rust-ssh-server/identity.key
+/etc/rust-ssh-server/identity.pub
+/etc/rust-ssh-server/controller.token
+/etc/rust-ssh-server/devices/*.token
+/etc/rust-ssh-server/server.env
+```
+
+`/etc/rust-ssh-server` 是服务器固定的数据目录。v0.4.5 会把旧目录迁移到这里，但不会重新生成或重建 token 和 identity 文件。
 
 ## 8. server 和 client 各自暴露什么
 
@@ -486,25 +546,25 @@ server 和 client 之间不是直接暴露 SSH 端口。服务器只中继加密
 - 公网端口可以被扫描，这是所有公网服务都无法完全避免的；扫描者没有正确 token 不能完成角色认证。
 - server 会检查协议版本、设备 ID、controller/device token，并限制握手时间、总连接数、帧大小和单设备并发会话。
 - device token 是单设备权限；controller token 是全设备权限。绝不能把 controller 配置码分发给 client。
-- 云安全组和 Ubuntu 防火墙只开放 `24443/tcp`，保持 Ubuntu、Windows OpenSSH 和 rust-ssh Release 更新。
+- 云安全组和 Ubuntu 防火墙只开放 `24443/tcp`，保持 Ubuntu、Windows OpenSSH 和 rust-ssh-server Release 更新。
 - 当前版本不包含 IP 限速、失败封禁、细粒度 ACL、审计、BitLocker、证书体系和自动下载新版本；token 文件变更会自动热加载，但只影响新的认证。
 
 ## 10. 常见问题
 
-### relay 启动失败
+### rust-ssh-server 启动失败
 
 查看：
 
 ```bash
-sudo systemctl status rust-ssh-relay --no-pager
-sudo journalctl -u rust-ssh-relay -n 100 --no-pager
+sudo systemctl status rust-ssh-server --no-pager
+sudo journalctl -u rust-ssh-server -n 100 --no-pager
 ```
 
 重点检查：`identity.key` 是否存在、controller token 是否至少 32 个非空白字符、`devices` 目录是否存在、服务用户是否能读取这些路径，以及 `24443` 是否已被占用。
 
 ### `device is not configured`
 
-说明服务器没有加载这个设备 ID 对应的 token。检查 ID 是否完整复制，确认文件名为 `/etc/rust-ssh/devices/<完整设备ID>.token`，然后执行 `sudo systemctl restart rust-ssh-relay`。
+说明服务器没有加载这个设备 ID 对应的 token。检查 ID 是否完整复制，确认文件名为 `/etc/rust-ssh-server/devices/<完整设备ID>.token`，然后执行 `sudo systemctl restart rust-ssh-server`。
 
 ### `device pairing code` 不匹配
 
@@ -516,11 +576,11 @@ sudo journalctl -u rust-ssh-relay -n 100 --no-pager
 
 ### `public key mismatch`
 
-不要重新运行 `keygen`。服务器身份变化后，旧配置码会失效；使用当前服务器的 `/etc/rust-ssh/identity.pub` 重新生成配置码，并确保 IP 和端口正确。
+不要重新运行 `keygen`。服务器身份变化后，旧配置码会失效；使用当前服务器的 `/etc/rust-ssh-server/identity.pub` 重新生成配置码，并确保 IP 和端口正确。
 
 ### SSH 已连通但登录失败
 
-这通常说明 rust-ssh 中继已经正常。检查 Windows 的 OpenSSH Server、SSH 用户名、Windows 密码或该用户的 SSH 公钥配置；rust-ssh 不替代 Windows SSH 的用户认证。
+这通常说明 rust-ssh-server 中继已经正常。检查 Windows 的 OpenSSH Server、SSH 用户名、Windows 密码或该用户的 SSH 公钥配置；rust-ssh-server 不替代 Windows SSH 的用户认证。
 
 ## 11. 源码构建
 
@@ -532,10 +592,10 @@ cargo test --locked --all-targets
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-构建服务器 relay：
+构建服务器 rust-ssh-server：
 
 ```bash
-cargo build --release --locked --bin rust-ssh
+cargo build --release --locked --bin rust-ssh-server
 ```
 
 构建 Windows client 或 connect：

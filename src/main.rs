@@ -7,9 +7,9 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "Rust-SSH-Server",
+    name = "rust-ssh-server",
     version,
-    about = "Rust-SSH-Server: SSH over a Noise-encrypted relay"
+    about = "rust-ssh-server: SSH over a Noise-encrypted relay"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -102,7 +102,7 @@ struct DeviceAddArgs {
     #[arg(
         long,
         env = "RUST_SSH_DEVICES_DIR",
-        default_value = "/etc/rust-ssh/devices"
+        default_value = "/etc/rust-ssh-server/devices"
     )]
     devices_dir: PathBuf,
 }
@@ -113,14 +113,14 @@ struct InventoryArgs {
     #[arg(
         long,
         env = "RUST_SSH_CONTROLLER_TOKEN_FILE",
-        default_value = "/etc/rust-ssh/controller.token"
+        default_value = "/etc/rust-ssh-server/controller.token"
     )]
     controller_token_file: PathBuf,
     /// Directory containing one <device_id>.token file per controlled device.
     #[arg(
         long,
         env = "RUST_SSH_DEVICES_DIR",
-        default_value = "/etc/rust-ssh/devices"
+        default_value = "/etc/rust-ssh-server/devices"
     )]
     devices_dir: PathBuf,
     /// Print secret values. Use only on a trusted server terminal.

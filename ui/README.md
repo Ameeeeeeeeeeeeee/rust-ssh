@@ -35,13 +35,13 @@ GUI 只负责配置和连接入口，真正的 SSH 认证和终端仍由系统 O
 先在服务器使用 client UI 显示的 ID 注册设备：
 
 ```bash
-rust-ssh device add --device-id rssh-0123456789abcdef0123456789abcdef --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --devices-dir /etc/rust-ssh/devices
+rust-ssh-server device add --device-id rssh-0123456789abcdef0123456789abcdef --server 198.51.100.10:24443 --server-key /etc/rust-ssh-server/identity.pub --devices-dir /etc/rust-ssh-server/devices
 ```
 
 把命令输出的整行设备配置码只粘贴到对应的 client。connect 要另用 controller token 生成配置码：
 
 ```bash
-rust-ssh pair-code --server 198.51.100.10:24443 --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
+rust-ssh-server pair-code --server 198.51.100.10:24443 --server-key /etc/rust-ssh-server/identity.pub --token-file /etc/rust-ssh-server/controller.token
 ```
 
 配置码包含服务器 IP、server 公钥和 token，应当按秘密材料保存；server 私钥不会进入配置码。controller token 绝不能分发给 agent。
@@ -53,4 +53,4 @@ cargo build --release --locked --features desktop --bin rust-ssh-client
 cargo build --release --locked --features desktop --bin rust-ssh-connect
 ```
 
-运行编译后的 exe/可执行文件不需要 Rust 或 Cargo。GUI 依赖通过 `desktop` feature 隔离，Ubuntu relay 默认使用无界面 `rust-ssh` 二进制。
+运行编译后的 exe/可执行文件不需要 Rust 或 Cargo。GUI 依赖通过 `desktop` feature 隔离，Ubuntu 服务器默认使用无界面 `rust-ssh-server` 二进制。

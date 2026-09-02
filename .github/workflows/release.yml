@@ -16,9 +16,9 @@ jobs:
         include:
           - os: ubuntu-latest
             name: server-linux-x86_64
-            asset: Rust-SSH-Server-linux-x86_64
+            asset: rust-ssh-server-linux-x86_64
             target: x86_64-unknown-linux-gnu
-            binary: rust-ssh
+            binary: rust-ssh-server
             extension: ""
             features: ""
           - os: macos-14

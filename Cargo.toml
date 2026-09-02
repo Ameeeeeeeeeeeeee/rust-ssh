@@ -1,11 +1,15 @@
 [package]
 name = "rust-ssh"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
 description = "A small Noise-encrypted relay for SSH over isolated networks"
 readme = "README.md"
+
+[[bin]]
+name = "rust-ssh-server"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"

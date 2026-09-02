@@ -3,7 +3,7 @@
 这份手册只保留能跑通的步骤。三端关系如下：
 
 ```text
-Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 Rust-SSH-Server:24443 <──主动连接── Mac/Windows Rust-SSH-Connect
+Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 rust-ssh-server:24443 <──主动连接── Mac/Windows Rust-SSH-Connect
 ```
 
 - 服务器只需要对外开放一个 TCP 端口：`24443`。
@@ -26,21 +26,21 @@ SERVER_IP=198.51.100.10
 export SERVER_IP
 ```
 
-下载最新正式版 Rust-SSH-Server 和 systemd 服务：
+下载最新正式版 rust-ssh-server 和 systemd 服务：
 
 ```bash
-sudo curl -L --fail -o /usr/local/bin/rust-ssh https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/Rust-SSH-Server-linux-x86_64
-sudo chmod 0755 /usr/local/bin/rust-ssh
-sudo curl -L --fail -o /etc/systemd/system/rust-ssh-relay.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-relay.service
+sudo curl -L --fail -o /usr/local/bin/rust-ssh-server https://github.com/Ameeeeeeeeeeeeee/rust-ssh/releases/latest/download/rust-ssh-server-linux-x86_64
+sudo chmod 0755 /usr/local/bin/rust-ssh-server
+sudo curl -L --fail -o /etc/systemd/system/rust-ssh-server.service https://raw.githubusercontent.com/Ameeeeeeeeeeeeee/rust-ssh/main/examples/rust-ssh-server.service
 ```
 
 创建服务账户、目录和服务器身份：
 
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin rustssh 2>/dev/null || true
-sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh
-sudo install -d -o root -g rustssh -m 2750 /etc/rust-ssh/devices
-sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --public-key /etc/rust-ssh/identity.pub
+sudo install -d -o root -g rustssh -m 0750 /etc/rust-ssh-server
+sudo install -d -o root -g rustssh -m 2750 /etc/rust-ssh-server/devices
+sudo /usr/local/bin/rust-ssh-server keygen --identity-key /etc/rust-ssh-server/identity.key --public-key /etc/rust-ssh-server/identity.pub
 ```
 
 `keygen` 只在第一次部署时运行。以后升级或重启都保留 `identity.key` 和 `identity.pub`，不要重新生成。
@@ -48,34 +48,34 @@ sudo /usr/local/bin/rust-ssh keygen --identity-key /etc/rust-ssh/identity.key --
 只生成一次 controller token：
 
 ```bash
-sudo test -e /etc/rust-ssh/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh/controller.token >/dev/null)
+sudo test -e /etc/rust-ssh-server/controller.token || (openssl rand -hex 32 | sudo tee /etc/rust-ssh-server/controller.token >/dev/null)
 ```
 
 设置权限：
 
 ```bash
-sudo chown root:rustssh /etc/rust-ssh/identity.key /etc/rust-ssh/identity.pub /etc/rust-ssh/controller.token /etc/rust-ssh/devices
-sudo chmod 0640 /etc/rust-ssh/identity.key /etc/rust-ssh/controller.token
-sudo chmod 0644 /etc/rust-ssh/identity.pub
+sudo chown root:rustssh /etc/rust-ssh-server/identity.key /etc/rust-ssh-server/identity.pub /etc/rust-ssh-server/controller.token /etc/rust-ssh-server/devices
+sudo chmod 0640 /etc/rust-ssh-server/identity.key /etc/rust-ssh-server/controller.token
+sudo chmod 0644 /etc/rust-ssh-server/identity.pub
 ```
 
 写入服务配置。这个配置块需要保留换行，直接整块复制：
 
 ```bash
-sudo tee /etc/rust-ssh/relay.env >/dev/null <<'EOF'
+sudo tee /etc/rust-ssh-server/server.env >/dev/null <<'EOF'
 RUST_SSH_LISTEN=0.0.0.0:24443
-RUST_SSH_IDENTITY_KEY=/etc/rust-ssh/identity.key
-RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh/controller.token
-RUST_SSH_DEVICES_DIR=/etc/rust-ssh/devices
+RUST_SSH_IDENTITY_KEY=/etc/rust-ssh-server/identity.key
+RUST_SSH_CONTROLLER_TOKEN_FILE=/etc/rust-ssh-server/controller.token
+RUST_SSH_DEVICES_DIR=/etc/rust-ssh-server/devices
 EOF
 ```
 
-启动 relay：
+启动 rust-ssh-server：
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now rust-ssh-relay
-sudo systemctl status rust-ssh-relay --no-pager
+sudo systemctl enable --now rust-ssh-server
+sudo systemctl status rust-ssh-server --no-pager
 ```
 
 在云安全组和 Ubuntu 防火墙中只放行 `TCP 24443`。如果这个端口已经被其他程序占用，就换一个端口，同时修改服务配置并重新生成配置码；不要和 RustDesk 端口复用。
@@ -124,20 +124,20 @@ DEVICE_ID=rssh-0123456789abcdef0123456789abcdef
 执行：
 
 ```bash
-sudo /usr/local/bin/rust-ssh device add --device-id "$DEVICE_ID" --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --devices-dir /etc/rust-ssh/devices
+sudo /usr/local/bin/rust-ssh-server device add --device-id "$DEVICE_ID" --server "$SERVER_IP:24443" --server-key /etc/rust-ssh-server/identity.pub --devices-dir /etc/rust-ssh-server/devices
 ```
 
 命令会完成两件事：
 
-1. 在服务器创建 `/etc/rust-ssh/devices/<设备ID>.token`；
+1. 在服务器创建 `/etc/rust-ssh-server/devices/<设备ID>.token`；
 2. 输出只属于这台设备的 `rssh1:...` 配置码。
 
 复制输出的整行配置码，粘贴回这台 Windows Rust-SSH-Client 的“配置码”框。点击“保存”→“启动”。状态显示绿色“已连接服务器”后，client 就在等待 SSH 连接；它不会自动开机启动。关闭窗口只会隐藏到右下角托盘，右键托盘图标选择“关闭”才会停止。
 
-relay 会自动读取新的 token，通常等待约 2 秒即可，不需要重启服务。可以在服务器查看注册情况：
+rust-ssh-server 会自动读取新的 token，通常等待约 2 秒即可，不需要重启服务。可以在服务器查看注册情况：
 
 ```bash
-sudo /usr/local/bin/rust-ssh inventory --controller-token-file /etc/rust-ssh/controller.token --devices-dir /etc/rust-ssh/devices
+sudo /usr/local/bin/rust-ssh-server inventory --controller-token-file /etc/rust-ssh-server/controller.token --devices-dir /etc/rust-ssh-server/devices
 ```
 
 ## 4. 部署 Mac / Windows connect
@@ -145,7 +145,7 @@ sudo /usr/local/bin/rust-ssh inventory --controller-token-file /etc/rust-ssh/con
 在服务器生成主控配置码：
 
 ```bash
-sudo /usr/local/bin/rust-ssh pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh/identity.pub --token-file /etc/rust-ssh/controller.token
+sudo /usr/local/bin/rust-ssh-server pair-code --server "$SERVER_IP:24443" --server-key /etc/rust-ssh-server/identity.pub --token-file /etc/rust-ssh-server/controller.token
 ```
 
 这份配置码拥有查看和连接所有已登记设备的权限，只交给可信的主控端。不要粘贴给 client。

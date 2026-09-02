@@ -93,7 +93,7 @@ pub async fn run(config: Config) -> Result<()> {
         listen = %config.listen,
         configured_devices,
         max_connections = MAX_CONNECTIONS,
-        "Rust-SSH-Server is listening"
+        "rust-ssh-server is listening"
     );
     loop {
         let (tcp, peer) = listener.accept().await.context("accepting TCP client")?;
@@ -195,7 +195,7 @@ fn spawn_auth_reload(
                         *current = next;
                         info!(
                             configured_devices = device_count,
-                            "reloaded Rust-SSH-Server token configuration"
+                            "reloaded rust-ssh-server token configuration"
                         );
                     }
                 }
