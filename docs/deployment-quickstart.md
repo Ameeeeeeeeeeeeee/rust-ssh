@@ -9,6 +9,7 @@ Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 rust-ssh-serv
 - 服务器只需要对外开放一个 TCP 端口：`24443`。
 - client 和 connect 都不需要对外开放端口。
 - Release 下载文件可以直接运行，不需要安装 Rust。
+- 支持同一 client 多个 SSH 终端的版本需要三端一起升级；不要混用旧版 server、client 和 connect。
 - 示例中的 IP、用户名和设备 ID 都是虚构值，请替换成自己的值。
 
 ## 1. 先部署服务器

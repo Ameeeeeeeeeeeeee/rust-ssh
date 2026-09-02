@@ -19,7 +19,7 @@ Mac/Windows connect ─主动连接─────┘
 
 - relay 可以同时管理多台 Windows client；
 - 不同设备可以并行连接；
-- 同一设备同时只允许一个 SSH 会话；
+- 同一设备可以同时承载多个 SSH 会话；
 - client 只允许连接本机 loopback SSH，避免成为内网代理；
 - 公网只需要开放服务器的一个 TCP 端口，默认 `24443`；
 - client 和 connect 不监听公网端口；
@@ -40,7 +40,7 @@ relay 启动时读取：
 
 认证规则：
 
-- `Role::Agent` 先按 `device_id` 查找对应的 `<device_id>.token`，再比较 token；
+- `Role::Agent` 和 `Role::AgentSession` 都先按 `device_id` 查找对应的 `<device_id>.token`，再比较 token；
 - `Role::Controller` 只比较 `controller.token`；
 - 不存在全局 agent token，也没有回退路径；
 - 单个 agent token 泄露只能注册或伪装对应设备，不能 list 或连接其他设备；
@@ -49,7 +49,7 @@ relay 启动时读取：
 - 如果热加载时发现文件暂时不存在或内容无效，relay 会保留上一份有效配置，避免半写入文件导致服务失效；已建立的连接不会被强制断开；
 - v0.4 起，client 首次启动时生成 `rssh-` 开头的随机设备 ID，并保存在本机配置中；它与 Windows 计算机名无关，也不会因修改计算机名而改变。
 
-Hello wire 格式、Noise、控制帧格式和 bridge 未改变；设备配置码新增了可选的设备 ID 绑定字段，旧的 controller 配置码仍可解码。
+Noise 和现有配置码格式保持不变；v0.4.7 新增了 agent session 通道，让一个 client 的控制连接和多个 SSH 数据连接分离。升级 v0.4.7 时，server、client、connect 三端需要一起升级；旧版程序不能与新协议互通。
 
 ## Pairing codes
 
@@ -161,6 +161,7 @@ cargo build --release --locked --features desktop --bin rust-ssh-connect
 
 ```text
 rust-ssh-server-linux-x86_64
+rust-ssh-server.service
 Rust-SSH-Client-windows-x86_64.msi
 Rust-SSH-Connect-windows-x86_64.msi
 Rust-SSH-Connect-macos-aarch64
@@ -170,7 +171,7 @@ Windows Release 只提供 MSI 安装包，不单独提供便携版 `.exe`；MSI 
 
 ## Security scope
 
-公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token、未知设备拒绝和单设备单会话限制。
+公网端口仍可能被扫描，部署时应使用云安全组和服务器防火墙。当前实现包含 Noise server key pinning、握手超时、连接数限制、帧长度限制、设备 ID 校验、per-device token、未知设备拒绝和单设备多会话的待处理数量限制。
 
 当前明确不包含：IP 限速、失败封禁、细粒度 ACL、审计、BitLocker、证书体系和自动下载新版本。修改 token 文件后的新认证会热加载；已经建立的会话不会被强制断开。
 

@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
@@ -76,8 +77,9 @@ async fn run_until_stopped_inner(
     let mut delay = Duration::from_secs(1);
     loop {
         report_status(&status, Status::Connecting);
+        let mut connected = false;
         let run_result = tokio::select! {
-            result = run_once(&config, status.as_ref()) => Some(result),
+            result = run_once(&config, status.as_ref(), &mut connected) => Some(result),
             _ = &mut stop => {
                 report_status(&status, Status::Stopped);
                 return Ok(());
@@ -93,14 +95,24 @@ async fn run_until_stopped_inner(
                 report_status(&status, Status::Retrying(error.to_string()));
             }
         }
+
+        let retry_delay = if connected {
+            Duration::from_secs(1)
+        } else {
+            delay
+        };
         tokio::select! {
-            _ = sleep(delay) => {}
+            _ = sleep(retry_delay) => {}
             _ = &mut stop => {
                 report_status(&status, Status::Stopped);
                 return Ok(());
             },
         }
-        delay = std::cmp::min(delay.saturating_mul(2), Duration::from_secs(30));
+        delay = if connected {
+            Duration::from_secs(1)
+        } else {
+            std::cmp::min(delay.saturating_mul(2), Duration::from_secs(30))
+        };
     }
 }
 
@@ -122,7 +134,11 @@ fn validate_target(target: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_once(config: &Config, status: Option<&std::sync::mpsc::Sender<Status>>) -> Result<()> {
+async fn run_once(
+    config: &Config,
+    status: Option<&std::sync::mpsc::Sender<Status>>,
+    connected: &mut bool,
+) -> Result<()> {
     let mut stream = noise::client_connect(&config.server, &config.server_key).await?;
     write_frame(
         &mut stream,
@@ -135,37 +151,87 @@ async fn run_once(config: &Config, status: Option<&std::sync::mpsc::Sender<Statu
     )
     .await?;
     expect_hello_ok(&mut stream).await?;
+    *connected = true;
     if let Some(sender) = status {
         let _ = sender.send(Status::Connected);
     }
     info!(device = %config.device_id, target = %config.target, "agent connected to relay");
 
+    let mut sessions = JoinSet::new();
     loop {
-        match read_frame(&mut stream).await? {
-            Message::Open { session_id } => {
-                let local = match TcpStream::connect(&config.target).await {
-                    Ok(local) => local,
-                    Err(error) => {
-                        write_frame(
-                            &mut stream,
-                            &Message::Failed {
-                                session_id,
-                                reason: format!("cannot connect to local SSH target: {error}"),
-                            },
-                        )
-                        .await?;
-                        continue;
+        tokio::select! {
+            message = read_frame(&mut stream) => {
+                match message? {
+                    Message::Open { session_id } => {
+                        let session_config = config.clone();
+                        sessions.spawn(async move {
+                            if let Err(error) = run_session(session_config, session_id).await {
+                                warn!(%error, "SSH session ended with an error");
+                            }
+                        });
                     }
-                };
-                let session_id_for_log = session_id.clone();
-                write_frame(&mut stream, &Message::Ready { session_id }).await?;
-                info!(session = %session_id_for_log, "SSH session accepted");
-                bridge::bidirectional(stream, local).await?;
-                return Ok(());
+                    other => return Err(anyhow!("unexpected relay message: {other:?}")),
+                }
             }
-            other => return Err(anyhow!("unexpected relay message: {other:?}")),
+            result = sessions.join_next(), if !sessions.is_empty() => {
+                if let Some(Err(error)) = result {
+                    warn!(%error, "SSH session task failed");
+                }
+            }
         }
     }
+}
+
+async fn run_session(config: Config, session_id: String) -> Result<()> {
+    let mut stream = noise::client_connect(&config.server, &config.server_key).await?;
+    write_frame(
+        &mut stream,
+        &Message::Hello {
+            version: PROTOCOL_VERSION,
+            role: Role::AgentSession,
+            token: config.token,
+            device_id: Some(config.device_id.clone()),
+        },
+    )
+    .await?;
+    expect_hello_ok(&mut stream).await?;
+    write_frame(
+        &mut stream,
+        &Message::SessionAttach {
+            session_id: session_id.clone(),
+        },
+    )
+    .await?;
+
+    match read_frame(&mut stream).await? {
+        Message::SessionAccepted { session_id: id } if id == session_id => {}
+        Message::Failed {
+            session_id: id,
+            reason,
+        } if id == session_id => return Err(anyhow!("relay refused SSH session: {reason}")),
+        other => return Err(anyhow!("unexpected relay session response: {other:?}")),
+    }
+
+    let local = match TcpStream::connect(&config.target).await {
+        Ok(local) => local,
+        Err(error) => {
+            let reason = format!("cannot connect to local SSH target: {error}");
+            write_frame(
+                &mut stream,
+                &Message::Failed {
+                    session_id,
+                    reason: reason.clone(),
+                },
+            )
+            .await?;
+            return Err(anyhow!(reason));
+        }
+    };
+
+    let session_id_for_log = session_id.clone();
+    write_frame(&mut stream, &Message::Ready { session_id }).await?;
+    info!(session = %session_id_for_log, "SSH session accepted");
+    bridge::bidirectional(stream, local).await
 }
 
 async fn expect_hello_ok<S>(stream: &mut S) -> Result<()>

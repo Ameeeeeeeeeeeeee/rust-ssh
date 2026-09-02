@@ -24,6 +24,8 @@ Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu rust-ssh-server:244
 
 运行 GitHub Release 中的二进制不需要 Rust。只有从源码编译时才需要 Rust 和 Cargo。
 
+支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。升级到该版本时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
+
 ## 1. 准备服务器信息
 
 你需要知道：
@@ -190,7 +192,7 @@ rssh-0123456789abcdef0123456789abcdef
 - 不会因修改 Windows 主机名而变化；
 - 不是秘密，单独知道它不能通过认证。
 
-随机 ID 有 128 位随机空间，正常情况下不会重复。服务器的 `device add` 还会拒绝同一个 ID 的重复注册；relay 也会拒绝同一个 ID 同时运行两个 client。
+随机 ID 有 128 位随机空间，正常情况下不会重复。服务器的 `device add` 还会拒绝同一个 ID 的重复注册；relay 也会拒绝同一个 ID 同时运行两个 client。一个 client 的控制连接可以承载多个 SSH 会话，每个会话会单独建立加密数据连接。
 
 当前设计不让用户在 UI 中直接编辑 ID，因为随意改 ID 会造成“本机 ID、服务器 token 和配置码”三者不一致。需要更换身份时，按第 7.2 节操作。
 
@@ -440,7 +442,7 @@ sudo mv /etc/rust-ssh /etc/rust-ssh-server
 sudo mv /etc/rust-ssh-server/relay.env /etc/rust-ssh-server/server.env
 ```
 
-替换 `/usr/local/bin/rust-ssh-server` 后执行：
+替换 `/usr/local/bin/rust-ssh-server` 和 service 文件后，server、Windows client、macOS/Windows connect 都升级到同一 Release，再执行：
 
 ```bash
 sudo systemctl restart rust-ssh-server
@@ -544,7 +546,7 @@ server 和 client 之间不是直接暴露 SSH 端口。服务器只中继加密
 
 - 不需要 X.509 证书，也不需要域名；Noise server key pinning 用于防止把配置码指向错误的服务器。
 - 公网端口可以被扫描，这是所有公网服务都无法完全避免的；扫描者没有正确 token 不能完成角色认证。
-- server 会检查协议版本、设备 ID、controller/device token，并限制握手时间、总连接数、帧大小和单设备并发会话。
+- server 会检查协议版本、设备 ID、controller/device token，并限制握手时间、总连接数、帧大小和单设备待处理会话数量；同一个 client 可以有多个活动 SSH 会话。
 - device token 是单设备权限；controller token 是全设备权限。绝不能把 controller 配置码分发给 client。
 - 云安全组和 Ubuntu 防火墙只开放 `24443/tcp`，保持 Ubuntu、Windows OpenSSH 和 rust-ssh-server Release 更新。
 - 当前版本不包含 IP 限速、失败封禁、细粒度 ACL、审计、BitLocker、证书体系和自动下载新版本；token 文件变更会自动热加载，但只影响新的认证。

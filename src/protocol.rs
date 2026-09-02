@@ -3,12 +3,13 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_FRAME_SIZE: u32 = 64 * 1024;
-pub const PROTOCOL_VERSION: u8 = 3;
+pub const PROTOCOL_VERSION: u8 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Agent,
+    AgentSession,
     Controller,
 }
 
@@ -27,6 +28,12 @@ pub enum Message {
         device_id: Option<String>,
     },
     HelloOk,
+    SessionAttach {
+        session_id: String,
+    },
+    SessionAccepted {
+        session_id: String,
+    },
     ListRequest,
     DeviceList {
         devices: Vec<DeviceInfo>,

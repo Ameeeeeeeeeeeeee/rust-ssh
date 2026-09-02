@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
@@ -17,6 +17,7 @@ use tokio::time::{timeout, Duration, MissedTickBehavior};
 use tracing::{info, warn};
 
 const MAX_CONNECTIONS: usize = 128;
+const MAX_PENDING_SESSIONS_PER_DEVICE: usize = 32;
 const NOISE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_TOKEN_BYTES: usize = 32;
 const MAX_TOKEN_BYTES: usize = 4096;
@@ -59,12 +60,11 @@ struct State {
 
 struct Device {
     open_tx: mpsc::Sender<OpenRequest>,
-    busy: AtomicBool,
+    pending: Mutex<HashMap<String, oneshot::Sender<std::result::Result<RelayStream, String>>>>,
 }
 
 struct OpenRequest {
     session_id: String,
-    response_tx: oneshot::Sender<std::result::Result<RelayStream, String>>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -241,6 +241,11 @@ async fn handle_connection(mut stream: RelayStream, state: State) -> Result<()> 
             let device_id = device_id.ok_or_else(|| anyhow!("agent did not provide device id"))?;
             handle_agent(stream, state, device_id).await
         }
+        Role::AgentSession => {
+            let device_id =
+                device_id.ok_or_else(|| anyhow!("agent session did not provide device id"))?;
+            handle_agent_session(stream, state, device_id).await
+        }
         Role::Controller => handle_controller(stream, state).await,
     }
 }
@@ -253,7 +258,7 @@ fn authenticate(
     device_tokens: &HashMap<String, Arc<str>>,
 ) -> Result<()> {
     match role {
-        Role::Agent => {
+        Role::Agent | Role::AgentSession => {
             let device_id = device_id.ok_or_else(|| anyhow!("agent did not provide device id"))?;
             if !device_id::is_valid(device_id) {
                 return Err(anyhow!("invalid device id"));
@@ -368,10 +373,10 @@ async fn handle_agent(mut stream: RelayStream, state: State, device_id: String) 
         return Err(anyhow!("invalid device id"));
     }
 
-    let (open_tx, mut open_rx) = mpsc::channel(1);
+    let (open_tx, mut open_rx) = mpsc::channel(MAX_PENDING_SESSIONS_PER_DEVICE);
     let device = Arc::new(Device {
         open_tx,
-        busy: AtomicBool::new(false),
+        pending: Mutex::new(HashMap::new()),
     });
     {
         let mut devices = state.devices.lock().await;
@@ -383,36 +388,102 @@ async fn handle_agent(mut stream: RelayStream, state: State, device_id: String) 
     info!(device = %device_id, "agent registered");
 
     while let Some(request) = open_rx.recv().await {
-        write_frame(
+        if let Err(error) = write_frame(
             &mut stream,
             &Message::Open {
                 session_id: request.session_id.clone(),
             },
         )
-        .await?;
-
-        let response = read_frame(&mut stream).await?;
-        match response {
-            Message::Ready { session_id } if session_id == request.session_id => {
-                let _ = request.response_tx.send(Ok(stream));
-                unregister(&state, &device_id, &device).await;
-                return Ok(());
-            }
-            Message::Failed { session_id, reason } if session_id == request.session_id => {
-                device.busy.store(false, Ordering::Release);
-                let _ = request.response_tx.send(Err(reason));
-            }
-            other => {
-                device.busy.store(false, Ordering::Release);
-                let reason = format!("unexpected agent response: {other:?}");
-                let _ = request.response_tx.send(Err(reason));
-            }
+        .await
+        {
+            fail_pending(&device, format!("device control connection ended: {error}")).await;
+            unregister(&state, &device_id, &device).await;
+            return Err(error);
         }
     }
 
+    fail_pending(&device, "device control connection ended".to_owned()).await;
     unregister(&state, &device_id, &device).await;
     info!(device = %device_id, "agent disconnected");
     Ok(())
+}
+
+async fn handle_agent_session(
+    mut stream: RelayStream,
+    state: State,
+    device_id: String,
+) -> Result<()> {
+    let session_id = match read_frame(&mut stream).await? {
+        Message::SessionAttach { session_id } => session_id,
+        other => {
+            return Err(anyhow!(
+                "agent session did not send an attach request: {other:?}"
+            ))
+        }
+    };
+    let device = {
+        let devices = state.devices.lock().await;
+        devices.get(&device_id).cloned()
+    };
+    let Some(device) = device else {
+        write_frame(
+            &mut stream,
+            &Message::Failed {
+                session_id,
+                reason: format!("device is offline: {device_id}"),
+            },
+        )
+        .await?;
+        return Ok(());
+    };
+
+    let Some(response_tx) = take_pending(&device, &session_id).await else {
+        write_frame(
+            &mut stream,
+            &Message::Failed {
+                session_id,
+                reason: "SSH session is no longer waiting".to_owned(),
+            },
+        )
+        .await?;
+        return Ok(());
+    };
+
+    if let Err(error) = write_frame(
+        &mut stream,
+        &Message::SessionAccepted {
+            session_id: session_id.clone(),
+        },
+    )
+    .await
+    {
+        let _ = response_tx.send(Err(format!("could not accept agent session: {error}")));
+        return Err(error);
+    }
+
+    match read_frame(&mut stream).await {
+        Ok(Message::Ready { session_id: id }) if id == session_id => {
+            let _ = response_tx.send(Ok(stream));
+            Ok(())
+        }
+        Ok(Message::Failed {
+            session_id: id,
+            reason,
+        }) if id == session_id => {
+            let _ = response_tx.send(Err(reason));
+            Ok(())
+        }
+        Ok(other) => {
+            let reason = format!("unexpected agent session response: {other:?}");
+            let _ = response_tx.send(Err(reason.clone()));
+            Err(anyhow!(reason))
+        }
+        Err(error) => {
+            let reason = format!("agent session ended before ready: {error}");
+            let _ = response_tx.send(Err(reason));
+            Err(error)
+        }
+    }
 }
 
 async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> {
@@ -451,29 +522,34 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
         return Ok(());
     };
 
-    if device.busy.swap(true, Ordering::AcqRel) {
+    let (response_tx, response_rx) = oneshot::channel();
+    if !register_pending(&device, &session_id, response_tx).await {
         write_frame(
             &mut stream,
             &Message::Failed {
                 session_id,
-                reason: "device already has an active SSH session".to_owned(),
+                reason: format!(
+                    "device has too many pending SSH sessions (limit: {MAX_PENDING_SESSIONS_PER_DEVICE})"
+                ),
             },
         )
         .await?;
         return Ok(());
     }
 
-    let (response_tx, response_rx) = oneshot::channel();
     if device
         .open_tx
         .send(OpenRequest {
             session_id: session_id.clone(),
-            response_tx,
         })
         .await
         .is_err()
     {
-        device.busy.store(false, Ordering::Release);
+        if let Some(response_tx) = take_pending(&device, &session_id).await {
+            let _ = response_tx.send(Err(
+                "device agent disconnected before session started".to_owned()
+            ));
+        }
         write_frame(
             &mut stream,
             &Message::Failed {
@@ -488,12 +564,10 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
     let agent_stream = match timeout(Duration::from_secs(15), response_rx).await {
         Ok(Ok(Ok(agent_stream))) => agent_stream,
         Ok(Ok(Err(reason))) => {
-            device.busy.store(false, Ordering::Release);
             write_frame(&mut stream, &Message::Failed { session_id, reason }).await?;
             return Ok(());
         }
         Ok(Err(_)) => {
-            device.busy.store(false, Ordering::Release);
             write_frame(
                 &mut stream,
                 &Message::Failed {
@@ -505,7 +579,7 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
             return Ok(());
         }
         Err(_) => {
-            device.busy.store(false, Ordering::Release);
+            let _ = take_pending(&device, &session_id).await;
             write_frame(
                 &mut stream,
                 &Message::Failed {
@@ -520,6 +594,36 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
 
     write_frame(&mut stream, &Message::Ready { session_id }).await?;
     bridge::bidirectional(stream, agent_stream).await
+}
+
+async fn register_pending(
+    device: &Arc<Device>,
+    session_id: &str,
+    response_tx: oneshot::Sender<std::result::Result<RelayStream, String>>,
+) -> bool {
+    let mut pending = device.pending.lock().await;
+    if pending.len() >= MAX_PENDING_SESSIONS_PER_DEVICE || pending.contains_key(session_id) {
+        return false;
+    }
+    pending.insert(session_id.to_owned(), response_tx);
+    true
+}
+
+async fn take_pending(
+    device: &Arc<Device>,
+    session_id: &str,
+) -> Option<oneshot::Sender<std::result::Result<RelayStream, String>>> {
+    device.pending.lock().await.remove(session_id)
+}
+
+async fn fail_pending(device: &Arc<Device>, reason: String) {
+    let pending = {
+        let mut pending = device.pending.lock().await;
+        std::mem::take(&mut *pending)
+    };
+    for response_tx in pending.into_values() {
+        let _ = response_tx.send(Err(reason.clone()));
+    }
 }
 
 async fn unregister(state: &State, device_id: &str, device: &Arc<Device>) {
@@ -570,6 +674,19 @@ mod tests {
     fn agent_accepts_the_matching_device_token() {
         let result = authenticate(
             &Role::Agent,
+            Some("device-a"),
+            DEVICE_A_TOKEN,
+            CONTROLLER_TOKEN,
+            &device_tokens(),
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn agent_session_accepts_the_matching_device_token() {
+        let result = authenticate(
+            &Role::AgentSession,
             Some("device-a"),
             DEVICE_A_TOKEN,
             CONTROLLER_TOKEN,
@@ -668,6 +785,22 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn device_can_hold_multiple_pending_sessions() {
+        let (open_tx, _open_rx) = mpsc::channel(MAX_PENDING_SESSIONS_PER_DEVICE);
+        let device = Arc::new(Device {
+            open_tx,
+            pending: Mutex::new(HashMap::new()),
+        });
+        let (first_tx, _first_rx) = oneshot::channel();
+        let (second_tx, _second_rx) = oneshot::channel();
+
+        assert!(register_pending(&device, "session-a", first_tx).await);
+        assert!(register_pending(&device, "session-b", second_tx).await);
+        assert!(take_pending(&device, "session-a").await.is_some());
+        assert!(take_pending(&device, "session-b").await.is_some());
     }
 
     #[test]
