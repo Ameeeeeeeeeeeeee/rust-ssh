@@ -696,7 +696,9 @@ pub fn session_id() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    format!("{nanos:x}-{counter:x}")
+    let process_id = std::process::id();
+    let entropy = crate::identity::generate_token().unwrap_or_else(|_| "no-entropy".to_owned());
+    format!("{nanos:x}-{process_id:x}-{counter:x}-{entropy}")
 }
 
 #[cfg(test)]
@@ -829,6 +831,16 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn session_ids_are_unique_across_requests() {
+        let first = session_id();
+        let second = session_id();
+
+        assert_ne!(first, second);
+        assert!(first.contains('-'));
+        assert!(second.contains('-'));
     }
 
     #[tokio::test]

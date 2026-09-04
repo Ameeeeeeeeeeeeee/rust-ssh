@@ -1382,6 +1382,9 @@ fn ssh_host_block(
         "\tHostName rust-ssh-proxy".to_owned(),
         format!("\tHostKeyAlias {device_id}"),
         format!("\tUser {user}"),
+        "\tControlMaster no".to_owned(),
+        "\tControlPersist no".to_owned(),
+        "\tControlPath none".to_owned(),
         format!(
             "\tProxyCommand {} --proxy --setup-code-file {} --target {}",
             shell_double_quote(executable),
@@ -1604,6 +1607,9 @@ mod tests {
         );
         assert!(block.contains("\n\tHostName rust-ssh-proxy\n"));
         assert!(block.contains("\n\tUser windows-user\n"));
+        assert!(block.contains("\n\tControlMaster no\n"));
+        assert!(block.contains("\n\tControlPersist no\n"));
+        assert!(block.contains("\n\tControlPath none\n"));
         assert!(!block.contains("\n    HostName"));
     }
 
