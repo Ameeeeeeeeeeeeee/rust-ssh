@@ -253,6 +253,7 @@ impl Default for ClientSettings {
 struct ConnectSettings {
     pairing_code: String,
     user: String,
+    identity_file: String,
     host_aliases: BTreeMap<String, String>,
 }
 
@@ -261,6 +262,7 @@ impl Default for ConnectSettings {
         Self {
             pairing_code: String::new(),
             user: default_user(),
+            identity_file: String::new(),
             host_aliases: BTreeMap::new(),
         }
     }
@@ -458,6 +460,7 @@ impl eframe::App for ClientApp {
         self.poll_tray(context);
         egui::CentralPanel::default().show(context, |ui| {
             ui.heading("Rust-SSH-Client");
+            ui.small(format!("版本 v{}", env!("CARGO_PKG_VERSION")));
             ui.colored_label(egui::Color32::GRAY, "Windows 被控端");
             ui.add_space(8.0);
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -775,6 +778,9 @@ impl ConnectApp {
         if user.chars().any(char::is_whitespace) {
             return Err(anyhow!("SSH 用户名不能包含空白字符"));
         }
+        if self.settings.identity_file.chars().any(char::is_control) {
+            return Err(anyhow!("SSH 私钥路径不能包含控制字符"));
+        }
         Ok(())
     }
 
@@ -820,6 +826,7 @@ impl eframe::App for ConnectApp {
 
         egui::CentralPanel::default().show(context, |ui| {
             ui.heading("Rust-SSH-Connect");
+            ui.small(format!("版本 v{}", env!("CARGO_PKG_VERSION")));
             ui.colored_label(egui::Color32::GRAY, "主控端");
             ui.add_space(8.0);
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -830,6 +837,10 @@ impl eframe::App for ConnectApp {
                     "从服务器为 controller token 生成 pair-code 后复制整段内容",
                 );
                 text_field(ui, "SSH 用户", &mut self.settings.user);
+                text_field(ui, "SSH 私钥", &mut self.settings.identity_file);
+                ui.small(
+                    "可选：主控端私钥路径。填写后会写入 IdentityFile；留空则使用 OpenSSH 默认密钥。",
+                );
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -1362,6 +1373,7 @@ fn install_ssh_host(settings: &ConnectSettings, device_id: &str) -> Result<Strin
         &user,
         executable,
         setup_code_path,
+        settings.identity_file.trim(),
         newline,
     );
     let path = user_ssh_config_path()?;
@@ -1375,13 +1387,23 @@ fn ssh_host_block(
     user: &str,
     executable: &str,
     setup_code_path: &str,
+    identity_file: &str,
     newline: &str,
 ) -> String {
-    [
+    let mut lines = vec![
         format!("Host {host}"),
         "\tHostName rust-ssh-proxy".to_owned(),
         format!("\tHostKeyAlias {device_id}"),
         format!("\tUser {user}"),
+    ];
+    if !identity_file.is_empty() {
+        lines.push(format!(
+            "\tIdentityFile {}",
+            shell_double_quote(identity_file)
+        ));
+        lines.push("\tIdentitiesOnly yes".to_owned());
+    }
+    lines.extend([
         "\tControlMaster no".to_owned(),
         "\tControlPersist no".to_owned(),
         "\tControlPath none".to_owned(),
@@ -1391,9 +1413,8 @@ fn ssh_host_block(
             shell_double_quote(setup_code_path),
             shell_double_quote(device_id),
         ),
-    ]
-    .join(newline)
-        + newline
+    ]);
+    lines.join(newline) + newline
 }
 
 fn user_ssh_config_path() -> Result<PathBuf> {
@@ -1603,6 +1624,7 @@ mod tests {
             "windows-user",
             r"C:\rust-ssh-connect.exe",
             r"C:\rust-ssh\data\connect.setup",
+            "/home/controller/.ssh/id_ed25519",
             "\n",
         );
         assert!(block.contains("\n\tHostName rust-ssh-proxy\n"));
@@ -1610,7 +1632,24 @@ mod tests {
         assert!(block.contains("\n\tControlMaster no\n"));
         assert!(block.contains("\n\tControlPersist no\n"));
         assert!(block.contains("\n\tControlPath none\n"));
+        assert!(block.contains("\n\tIdentityFile \"/home/controller/.ssh/id_ed25519\"\n"));
+        assert!(block.contains("\n\tIdentitiesOnly yes\n"));
         assert!(!block.contains("\n    HostName"));
+    }
+
+    #[test]
+    fn generated_ssh_host_block_omits_optional_identity_file() {
+        let block = ssh_host_block(
+            "example-host",
+            "rssh-device-a",
+            "windows-user",
+            "/usr/local/bin/rust-ssh-connect",
+            "/tmp/connect.setup",
+            "",
+            "\n",
+        );
+        assert!(!block.contains("IdentityFile"));
+        assert!(!block.contains("IdentitiesOnly"));
     }
 
     #[test]

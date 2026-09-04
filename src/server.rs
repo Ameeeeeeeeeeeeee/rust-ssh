@@ -398,6 +398,7 @@ async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> R
             Err(error) => Err(error),
         }
     });
+    let mut control_reader_consumed = false;
 
     let result = loop {
         tokio::select! {
@@ -420,6 +421,10 @@ async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> R
                 }
             }
             control_result = &mut control_reader => {
+                // Polling a JoinHandle to completion consumes its result.  Do
+                // not await the same handle again during cleanup: Tokio
+                // treats that as a second poll and panics.
+                control_reader_consumed = true;
                 break match control_result {
                     Ok(result) => result,
                     Err(error) => Err(anyhow!("agent control watcher failed: {error}")),
@@ -428,10 +433,10 @@ async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> R
         }
     };
 
-    if !control_reader.is_finished() {
+    if !control_reader_consumed {
         control_reader.abort();
+        let _ = control_reader.await;
     }
-    let _ = control_reader.await;
     fail_pending(&device, "device control connection ended".to_owned()).await;
     unregister(&state, &device_id, &device).await;
     match result {

@@ -10,6 +10,7 @@ Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 rust-ssh-serv
 - client 和 connect 都不需要对外开放端口。
 - Release 下载文件可以直接运行，不需要安装 Rust。
 - 支持同一 client 多个 SSH 终端的版本需要三端一起升级；不要混用旧版 server、client 和 connect。
+- v0.5.4 的 Client 和 Connect GUI 会显示当前版本；Connect 支持填写主控端 SSH 私钥路径来生成免密登录配置。
 - 示例中的 IP、用户名和设备 ID 都是虚构值，请替换成自己的值。
 
 ## 1. 先部署服务器
@@ -166,7 +167,30 @@ chmod +x Rust-SSH-Connect-macos-aarch64
 
 Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码会保存在安装目录下的 `data` 文件夹中。Connect 也会常驻右下角托盘；关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。
 
-打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。依次点击：
+打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。如果要免密登录，还要填写“SSH 私钥”：这是主控端的私钥文件路径，例如 Windows 上的 `C:\Users\controller\.ssh\id_ed25519`，macOS 上的 `~/.ssh/id_ed25519`；不要填写 `.pub` 文件，也不要把私钥复制到服务器或被控端。留空时 OpenSSH 会尝试自己的默认密钥。
+
+免密登录需要把“主控端公钥”放到“被控 Windows 用户”的 `authorized_keys`，不是 `known_hosts`。没有密钥时，可以在主控端生成一对：
+
+```bash
+ssh-keygen -t ed25519 -f "$HOME/.ssh/rust-ssh-connect" -C "rust-ssh-connect"
+```
+
+Windows 主控端也可以在 PowerShell 执行：
+
+```powershell
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\rust-ssh-connect" -C "rust-ssh-connect"
+```
+
+把生成的 `.pub` 文件内容完整复制到被控 Windows 登录用户的 `authorized_keys`：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh"
+notepad "$env:USERPROFILE\.ssh\authorized_keys"
+```
+
+每把公钥占一整行；如果文件已有其他公钥，只追加，不要覆盖。然后回到 Connect 填写对应的私钥路径，点击“保存”→“配置 SSH”，再用下面的 `ssh` 命令连接。`known_hosts` 仍然应该保留，它只负责记住 SSH 服务器指纹。
+
+依次点击：
 
 ```text
 刷新设备 → 选择设备 → 配置 SSH
@@ -181,6 +205,8 @@ ssh rssh-0123456789abcdef0123456789abcdef
 如果想改昵称，在设备列表中右键设备，选择“设置 Host 昵称”，保存后重新点击“配置 SSH”。以后直接执行 `ssh 你设置的昵称` 即可；SSH 配置中的 ProxyCommand 是内部实现，不需要手写。
 
 connect 只负责生成 SSH 配置和启动内部代理；Windows 下可以关闭窗口隐藏到托盘，之后仍可直接使用 `ssh Host` 或 VS Code。Windows client 也必须保持托盘运行并显示绿色已连接状态。Client 遇到网络或服务器临时断开时会持续自动重连，不会因为一次连接失败退出；只有在托盘菜单中选择“关闭”才会停止。
+
+如果密钥设置正确，SSH 不会再询问 Windows 账户密码；如果私钥本身设置了保护口令，首次使用时仍可能询问“私钥口令”，这和 Windows 账户密码不是一回事。
 
 ## 5. 只要记住这四点
 
