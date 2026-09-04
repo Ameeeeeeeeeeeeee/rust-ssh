@@ -24,7 +24,7 @@ Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu rust-ssh-server:244
 
 运行 GitHub Release 中的二进制不需要 Rust。只有从源码编译时才需要 Rust 和 Cargo。
 
-支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器暂时不可用时持续自动重连；v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题；v0.5.2 修复服务器残留断开设备状态的问题、略微增加两个 Windows GUI 的初始高度，并让 MSI 在升级前提醒用户后强制结束对应的旧 GUI 进程；v0.5.3 禁止主控 SSH 连接复用、增强并发会话 ID 的唯一性，并修复 VS Code Remote-SSH 非交互脚本输入结束时代理过早断开的问题；v0.5.4 在两个 Windows GUI 中显示当前版本，Connect 支持填写主控端 SSH 私钥路径，并修复 relay 清理已结束控制任务时的重复轮询问题。升级到 v0.5.x 时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
+支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器暂时不可用时持续自动重连；v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题；v0.5.2 修复服务器残留断开设备状态的问题、略微增加两个 Windows GUI 的初始高度，并让 MSI 在升级前提醒用户后强制结束对应的旧 GUI 进程；v0.5.3 禁止主控 SSH 连接复用、增强并发会话 ID 的唯一性，并修复 VS Code Remote-SSH 非交互脚本输入结束时代理过早断开的问题；v0.5.4 在两个 Windows GUI 中显示当前版本，并修复 relay 清理已结束控制任务时的重复轮询问题。升级到 v0.5.x 时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
 
 ## 1. 准备服务器信息
 
@@ -316,7 +316,6 @@ ssh -V
 | --- | --- |
 | 配置码 | 服务器生成的 controller 配置码 |
 | SSH 用户 | Windows OpenSSH 的登录用户名，例如 `windows-user` |
-| SSH 私钥（可选） | 主控端私钥路径，例如 `~/.ssh/id_ed25519` 或 `C:\Users\controller\.ssh\id_ed25519`；不要填 `.pub` 文件 |
 
 点击“刷新设备”。Windows client 正在运行且已通过认证时，列表会出现它的设备 ID。选择设备后可以：
 
@@ -345,67 +344,13 @@ ssh rssh-0123456789abcdef0123456789abcdef
 
 在设备列表上右键可以选择“设置 Host 昵称”。昵称只允许字母、数字、点、下划线和短横线；保存后再次点击“配置 SSH”，以后就可以直接执行 `ssh 你设置的昵称`。SSH 配置中那条较长的 `ProxyCommand` 是内部实现，不需要手写，正常使用时只输入 `ssh Host昵称`。
 
-也可以在 VS Code Remote-SSH 中选择同名主机。第一次 SSH 登录时，输入 Windows OpenSSH 用户的密码，或使用下一节配置的 SSH 公钥。
+也可以在 VS Code Remote-SSH 中选择同名主机。第一次 SSH 登录时，输入 Windows OpenSSH 用户的密码，或使用你自行配置的 SSH 公钥。
 
 配置完成后，connect GUI 可以关闭，因为 SSH 会通过 SSH `ProxyCommand` 自动调用 connect 的内部代理模式。但是 Windows client 必须继续运行；如果移动或卸载 connect，需要重新安装/打开 connect 并再次点击“配置 SSH”。
 
-### 4.4 配置 SSH 公钥免密登录
+### 4.4 SSH 免密配置范围
 
-这里有两个容易混淆的文件：
-
-| 文件 | 保存什么 | 作用 |
-| --- | --- | --- |
-| `known_hosts` | 被控 Windows OpenSSH Server 的主机公钥/指纹 | 确认“连接到的是哪台 SSH 服务器”，不能授权登录 |
-| `authorized_keys` | 主控端 SSH 私钥对应的公钥 | 授权某个公钥登录指定 Windows 用户 |
-
-因此，把公钥放进 `known_hosts` 不会免密。正确关系是：私钥留在主控端，匹配的公钥放到被控 Windows 的目标登录用户下。
-
-如果主控端还没有专用密钥，在主控端生成一对。macOS/Linux：
-
-```bash
-ssh-keygen -t ed25519 -f "$HOME/.ssh/rust-ssh-connect" -C "rust-ssh-connect"
-```
-
-Windows 主控端 PowerShell：
-
-```powershell
-ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\rust-ssh-connect" -C "rust-ssh-connect"
-```
-
-已有 `ssh-rsa` 密钥也可以继续用：私钥填 `id_rsa`，公钥必须是同一对的 `id_rsa.pub`。不要把私钥内容粘贴到任何配置码、服务器文件或被控端。
-
-在被控 Windows 上，以准备登录的那个 Windows 用户打开 PowerShell：
-
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh"
-notepad "$env:USERPROFILE\.ssh\authorized_keys"
-```
-
-把主控端 `.pub` 文件中的整行内容追加进去，一把钥匙占一行，不要覆盖文件里已有的其他公钥。普通 Windows 用户通常使用这个位置。如果登录用户属于本机 Administrators 组，而 `sshd_config` 启用了默认的管理员匹配规则，则应把公钥放到：
-
-```text
-C:\ProgramData\ssh\administrators_authorized_keys
-```
-
-此时应以管理员身份编辑该文件，并确保文件权限只允许 `Administrators` 和 `SYSTEM` 读取。若不确定当前规则，检查 `C:\ProgramData\ssh\sshd_config` 中是否有 `Match Group administrators`，以及其中的 `AuthorizedKeysFile` 设置。
-
-回到 Connect：
-
-1. “SSH 用户”填写刚才放置 `authorized_keys` 的 Windows 用户名；
-2. “SSH 私钥”填写主控端私钥路径（例如 `rust-ssh-connect`，不是 `.pub`）；
-3. 点击“保存”，选择设备，再点击“配置 SSH”；
-4. 执行 `ssh 你的Host昵称`，或在 VS Code Remote-SSH 中连接同一个 Host。
-
-生成的 SSH 配置会包含：
-
-```text
-    IdentityFile "主控端私钥路径"
-    IdentitiesOnly yes
-```
-
-`IdentityFile` 只记录本机路径，私钥不会通过 Rust-SSH relay 传输。`IdentitiesOnly yes` 让 OpenSSH 优先只使用这把指定的钥匙，避免它尝试一堆无关密钥后又回退到密码。
-
-如果仍然出现密码提示，依次检查：Windows 用户名是否完全一致；公钥是否是一整行且与私钥匹配；Connect 是否重新点击了“配置 SSH”；SSH 配置中的 `IdentityFile` 是否指向主控端私钥。可以用 `ssh -vvv 你的Host昵称` 查看是否出现 `Offering public key` 和 `Server accepts key`。如果私钥设置了保护口令，OpenSSH 仍会询问私钥口令，但不会询问 Windows 账户密码；Rust-SSH relay 本身不负责 Windows 用户认证。
+Rust-SSH 不配置 SSH 免密，也不读取或保存主控端私钥。需要免密登录时，请你自行按 OpenSSH 规则配置被控 Windows 的 `authorized_keys`，以及主控端自己的 `IdentityFile` 或 `ssh-agent`。`known_hosts` 只保存服务器指纹，不能代替 `authorized_keys`。
 
 ## 5. 配置文件和密钥分别放在哪里
 

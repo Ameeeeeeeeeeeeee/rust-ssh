@@ -49,9 +49,9 @@ relay 启动时读取：
 - 如果热加载时发现文件暂时不存在或内容无效，relay 会保留上一份有效配置，避免半写入文件导致服务失效；已建立的连接不会被强制断开；
 - v0.4 起，client 首次启动时生成 `rssh-` 开头的随机设备 ID，并保存在本机配置中；它与 Windows 计算机名无关，也不会因修改计算机名而改变。
 
-Noise 和现有配置码格式保持不变；v0.5.0 包含 agent session 通道，让一个 client 的控制连接和多个 SSH 数据连接分离，并让 Client 在网络或服务器暂时不可用时持续自动重连。v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题。v0.5.2 修复服务器残留断开设备状态的问题、略微增加两个 Windows GUI 的初始高度，并让 MSI 在升级前提醒用户后强制结束对应的旧 GUI 进程。v0.5.3 禁止主控 SSH 连接复用、增强并发会话 ID 的唯一性，并修复 VS Code Remote-SSH 非交互脚本输入结束时代理过早断开的问题。v0.5.4 在 Client 和 Connect GUI 中显示当前版本，Connect 可为生成的 SSH Host 指定主控端私钥，并修复 relay 清理已结束控制任务时的重复轮询问题。升级 v0.5.x 时，server、client、connect 三端需要一起升级；旧版程序不能与新协议互通。
+Noise 和现有配置码格式保持不变；v0.5.0 包含 agent session 通道，让一个 client 的控制连接和多个 SSH 数据连接分离，并让 Client 在网络或服务器暂时不可用时持续自动重连。v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题。v0.5.2 修复服务器残留断开设备状态的问题、略微增加两个 Windows GUI 的初始高度，并让 MSI 在升级前提醒用户后强制结束对应的旧 GUI 进程。v0.5.3 禁止主控 SSH 连接复用、增强并发会话 ID 的唯一性，并修复 VS Code Remote-SSH 非交互脚本输入结束时代理过早断开的问题。v0.5.4 在 Client 和 Connect GUI 中显示当前版本，并修复 relay 清理已结束控制任务时的重复轮询问题。升级 v0.5.x 时，server、client、connect 三端需要一起升级；旧版程序不能与新协议互通。
 
-SSH 用户登录仍由被控 Windows 上的 OpenSSH Server 负责。`known_hosts` 只保存服务器指纹，不是登录公钥；要免密登录，应把主控端私钥对应的公钥放到被控 Windows 用户的 `authorized_keys`，再在 Connect 的“SSH 私钥”字段填写主控端私钥路径。私钥只留在主控端。
+SSH 用户登录仍由被控 Windows 上的 OpenSSH Server 负责。Rust-SSH 不接管 SSH 免密配置；需要免密时请自行按 OpenSSH 规则配置 `authorized_keys`、`IdentityFile` 或 `ssh-agent`。`known_hosts` 只保存服务器指纹，不是登录公钥。
 
 ## Pairing codes
 
