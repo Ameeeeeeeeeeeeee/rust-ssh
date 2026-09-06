@@ -11,6 +11,7 @@ Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 rust-ssh-serv
 - Release 下载文件可以直接运行，不需要安装 Rust。
 - 支持同一 client 多个 SSH 终端的版本需要三端一起升级；不要混用旧版 server、client 和 connect。
 - v0.5.4 的 Client 和 Connect GUI 会显示当前版本；SSH 免密配置由你按 OpenSSH 规则自行管理，GUI 不会修改密钥设置。
+- v0.5.5 修复了分段传输加密帧导致 VS Code Remote-SSH 卡住或连接失败的问题；请将三端都升级到 v0.5.5，已有配置码和密钥可继续使用。
 - 示例中的 IP、用户名和设备 ID 都是虚构值，请替换成自己的值。
 
 ## 1. 先部署服务器

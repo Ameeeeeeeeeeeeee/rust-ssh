@@ -309,16 +309,19 @@ where
                 }
             }
 
-            let length = u32::from_be_bytes(this.read_header) as usize;
-            if length == 0 || length > MAX_CIPHERTEXT_FRAME {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid encrypted relay frame length: {length}"),
-                )));
+            // Retain the completed header and partial body across Pending.
+            // Otherwise the next poll mistakes ciphertext for a new header.
+            if this.read_body.is_empty() {
+                let length = u32::from_be_bytes(this.read_header) as usize;
+                if length == 0 || length > MAX_CIPHERTEXT_FRAME {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid encrypted relay frame length: {length}"),
+                    )));
+                }
+                this.read_body.resize(length, 0);
+                this.read_body_filled = 0;
             }
-            this.read_header_filled = 0;
-            this.read_body.resize(length, 0);
-            this.read_body_filled = 0;
 
             while this.read_body_filled < this.read_body.len() {
                 let start = this.read_body_filled;
@@ -347,6 +350,7 @@ where
             }
 
             let ciphertext = std::mem::take(&mut this.read_body);
+            this.read_header_filled = 0;
             this.read_body_filled = 0;
             let mut plaintext = vec![0_u8; ciphertext.len()];
             let length = match this.transport.read_message(&ciphertext, &mut plaintext) {
@@ -479,5 +483,41 @@ mod tests {
         );
         assert!(client_result.is_err());
         assert!(server_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn transport_preserves_frames_across_partial_reads() {
+        // Force Pending within both frame headers and ciphertext bodies. A
+        // large in-memory stream can hide the fragmentation seen over TCP.
+        for capacity in [1, 4, 5, 17, 1024] {
+            let keypair = Builder::new(identity::noise_params())
+                .generate_keypair()
+                .unwrap();
+            let server_identity = ServerIdentity::from_private(keypair.private).unwrap();
+            let (client_side, server_side) = duplex(capacity);
+            let (client_result, server_result) = tokio::join!(
+                client_handshake(client_side, &keypair.public),
+                server_handshake(server_side, &server_identity)
+            );
+            let mut client = client_result.unwrap();
+            let mut server = server_result.unwrap();
+            let message = vec![0x5a_u8; MAX_PLAINTEXT_CHUNK * 2 + 17];
+            let mut received = Vec::new();
+
+            timeout(Duration::from_secs(15), async {
+                tokio::try_join!(
+                    async {
+                        client.write_all(&message).await?;
+                        client.shutdown().await
+                    },
+                    async { server.read_to_end(&mut received).await.map(|_| ()) }
+                )
+            })
+            .await
+            .expect("fragmented transport must make progress")
+            .unwrap_or_else(|error| panic!("capacity {capacity}: {error}"));
+
+            assert_eq!(received, message, "capacity {capacity}");
+        }
     }
 }
