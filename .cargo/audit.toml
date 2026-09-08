@@ -1,0 +1,31 @@
+# cargo-audit configuration.
+#
+# Every ignore below is checked against the release targets before release:
+# cargo tree --features desktop --target <windows|macos> shows these packages
+# are not in the active dependency tree of any shipped binary, or the
+# advisory flags unmaintained crates without a concrete vulnerability whose
+# fix would require replacing the whole GUI stack.
+
+[advisories]
+ignore = [
+    # gtk3/atk/gdk stack, only referenced by Linux GUI builds; the Linux
+    # Server does not enable the desktop feature and no shipped binary
+    # compiles these crates.
+    "RUSTSEC-2024-0412", # gdk is unmaintained
+    "RUSTSEC-2024-0413", # atk is unmaintained
+    "RUSTSEC-2024-0415", # gtk is unmaintained
+    "RUSTSEC-2024-0416", # atk-sys is unmaintained
+    "RUSTSEC-2024-0418", # gdk-sys is unmaintained
+    "RUSTSEC-2024-0419", # gtk3-macros is unmaintained
+    "RUSTSEC-2024-0420", # gtk-sys is unmaintained
+    "RUSTSEC-2024-0429", # glib: variant memory unsoundness, fixed in 0.20; not in any release target tree
+    "GHSA-wrw7-89jp-8q8g", # glib <0.20; not in any release target tree
+    # proc-macro-error: maintainer unreachable; build-time only and not in
+    # the active tree of any release target.
+    "RUSTSEC-2024-0370",
+    # ttf-parser: unmaintained with no patched version. It is in the desktop
+    # tree via egui 0.29 (epaint -> ab_glyph -> owned_ttf_parser); replacing
+    # it requires a major egui upgrade. The advisory records the maintenance
+    # status, not a concrete vulnerability.
+    "RUSTSEC-2026-0192",
+]

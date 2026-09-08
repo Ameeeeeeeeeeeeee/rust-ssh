@@ -3,7 +3,10 @@ use crate::bridge;
 use crate::device_id;
 use crate::identity::ServerIdentity;
 use crate::noise::{self, RelayStream};
-use crate::protocol::{read_frame, write_frame, DeviceInfo, Message, Role, PROTOCOL_VERSION};
+use crate::protocol::{
+    read_frame, write_frame, DeviceInfo, HeartbeatTiming, Message, Role, HEARTBEAT_FEATURE,
+    HELLO_TIMEOUT, PROTOCOL_VERSION, SESSION_ESTABLISH_TIMEOUT,
+};
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::fs;
@@ -12,8 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock, Semaphore};
-use tokio::time::{timeout, Duration, MissedTickBehavior};
+use tokio::sync::{mpsc, oneshot, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
+use tokio::time::{sleep_until, timeout, Duration, Instant, MissedTickBehavior};
 use tracing::{info, warn};
 
 const MAX_CONNECTIONS: usize = 128;
@@ -21,6 +24,39 @@ const MAX_PENDING_SESSIONS_PER_DEVICE: usize = 32;
 const NOISE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_TOKEN_BYTES: usize = 32;
 const MAX_TOKEN_BYTES: usize = 4096;
+const CONTROL_FRAME_CHANNEL_CAPACITY: usize = 16;
+
+/// Deadline policy for connection establishment and control-channel liveness.
+/// Long-running SSH data transfer is never bound by these.
+#[derive(Debug, Clone, Copy)]
+pub struct ServerTiming {
+    /// Absolute deadline for the first Hello frame after the Noise handshake
+    /// and for each authentication response.
+    pub hello_timeout: Duration,
+    /// Deadline for an agent session to send SessionAttach after its Hello.
+    pub attach_timeout: Duration,
+    /// Deadline for an agent session to report Ready after SessionAccepted.
+    pub ready_timeout: Duration,
+    /// Deadline for a controller to send its first request.
+    pub request_timeout: Duration,
+    /// Total deadline for a new session: queuing the Open, writing it to the
+    /// agent control channel, and the agent response all fit inside this.
+    pub open_timeout: Duration,
+    pub heartbeat: HeartbeatTiming,
+}
+
+impl Default for ServerTiming {
+    fn default() -> Self {
+        Self {
+            hello_timeout: HELLO_TIMEOUT,
+            attach_timeout: Duration::from_secs(10),
+            ready_timeout: SESSION_ESTABLISH_TIMEOUT,
+            request_timeout: Duration::from_secs(10),
+            open_timeout: SESSION_ESTABLISH_TIMEOUT,
+            heartbeat: HeartbeatTiming::default(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -56,11 +92,17 @@ struct State {
     devices: Arc<Mutex<HashMap<String, Arc<Device>>>>,
     identity: Arc<ServerIdentity>,
     connections: Arc<Semaphore>,
+    timing: ServerTiming,
 }
+
+/// An accepted agent session stream plus the connection-slot permit it
+/// occupied. The permit travels with the stream so the global quota counts
+/// the connection for as long as data actually flows through it.
+type SessionHandoff = std::result::Result<(RelayStream, OwnedSemaphorePermit), String>;
 
 struct Device {
     open_tx: mpsc::Sender<OpenRequest>,
-    pending: Mutex<HashMap<String, oneshot::Sender<std::result::Result<RelayStream, String>>>>,
+    pending: Mutex<HashMap<String, oneshot::Sender<SessionHandoff>>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
 }
 
@@ -69,6 +111,11 @@ struct OpenRequest {
 }
 
 pub async fn run(config: Config) -> Result<()> {
+    run_with_timing(config, ServerTiming::default()).await
+}
+
+/// Server with tunable deadlines for tests.
+pub async fn run_with_timing(config: Config, timing: ServerTiming) -> Result<()> {
     let identity = Arc::new(ServerIdentity::load(&config.identity_key)?);
     let auth = Arc::new(RwLock::new(load_auth_snapshot(
         &config.controller_token_file,
@@ -82,6 +129,7 @@ pub async fn run(config: Config) -> Result<()> {
         devices: Arc::new(Mutex::new(HashMap::new())),
         identity,
         connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+        timing,
     };
     spawn_auth_reload(
         auth,
@@ -108,7 +156,6 @@ pub async fn run(config: Config) -> Result<()> {
         let identity = state.identity.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            let _permit = permit;
             if let Err(error) = tcp.set_nodelay(true) {
                 warn!(%peer, %error, "could not enable TCP_NODELAY");
             }
@@ -119,7 +166,7 @@ pub async fn run(config: Config) -> Result<()> {
             .await
             {
                 Ok(Ok(stream)) => {
-                    if let Err(error) = handle_connection(stream, state).await {
+                    if let Err(error) = handle_connection(stream, state, permit).await {
                         warn!(%peer, %error, "relay connection ended with error");
                     }
                 }
@@ -208,15 +255,26 @@ fn spawn_auth_reload(
     });
 }
 
-async fn handle_connection(mut stream: RelayStream, state: State) -> Result<()> {
-    let hello = read_frame(&mut stream).await?;
-    let (version, role, device_id, token) = match hello {
+async fn handle_connection(
+    mut stream: RelayStream,
+    state: State,
+    permit: OwnedSemaphorePermit,
+) -> Result<()> {
+    // Absolute deadline for the first Hello: slow drips cannot keep extending
+    // it, and connections that never authenticate release their slot.
+    let hello = match timeout(state.timing.hello_timeout, read_frame(&mut stream)).await {
+        Ok(Ok(hello)) => hello,
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Err(anyhow!("timed out waiting for hello")),
+    };
+    let (version, role, device_id, token, features) = match hello {
         Message::Hello {
             version,
             role,
             device_id,
             token,
-        } => (version, role, device_id, token),
+            features,
+        } => (version, role, device_id, token, features),
         _ => return Err(anyhow!("first control message must be hello")),
     };
 
@@ -235,17 +293,30 @@ async fn handle_connection(mut stream: RelayStream, state: State) -> Result<()> 
             &auth.device_tokens,
         )?;
     }
-    write_frame(&mut stream, &Message::HelloOk).await?;
+    // Heartbeat runs only when the peer advertised support; old endpoints
+    // keep working without it.
+    let heartbeat = features.iter().any(|feature| feature == HEARTBEAT_FEATURE);
+    write_frame(
+        &mut stream,
+        &Message::HelloOk {
+            features: if heartbeat {
+                vec![HEARTBEAT_FEATURE.to_owned()]
+            } else {
+                Vec::new()
+            },
+        },
+    )
+    .await?;
 
     match role {
         Role::Agent => {
             let device_id = device_id.ok_or_else(|| anyhow!("agent did not provide device id"))?;
-            handle_agent(stream, state, device_id).await
+            handle_agent(stream, state, device_id, heartbeat, permit).await
         }
         Role::AgentSession => {
             let device_id =
                 device_id.ok_or_else(|| anyhow!("agent session did not provide device id"))?;
-            handle_agent_session(stream, state, device_id).await
+            handle_agent_session(stream, state, device_id, permit).await
         }
         Role::Controller => handle_controller(stream, state).await,
     }
@@ -369,7 +440,13 @@ fn valid_token_length(token: &str) -> bool {
     (MIN_TOKEN_BYTES..=MAX_TOKEN_BYTES).contains(&token.len())
 }
 
-async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> Result<()> {
+async fn handle_agent(
+    stream: RelayStream,
+    state: State,
+    device_id: String,
+    heartbeat: bool,
+    _permit: OwnedSemaphorePermit,
+) -> Result<()> {
     if !device_id::is_valid(&device_id) {
         return Err(anyhow!("invalid device id"));
     }
@@ -392,15 +469,41 @@ async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> R
     info!(device = %device_id, "agent registered");
 
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut control_reader = tokio::spawn(async move {
-        match read_frame(&mut reader).await {
-            Ok(message) => Err(anyhow!("unexpected agent control message: {message:?}")),
-            Err(error) => Err(error),
+    let timing = state.timing;
+
+    // A dedicated reader task decodes whole frames and delivers them over a
+    // channel. `read_frame` is not cancellation-safe and must never be
+    // cancelled mid-frame from a select!.
+    let (frame_tx, mut frame_rx) = mpsc::channel(CONTROL_FRAME_CHANNEL_CAPACITY);
+    let mut reader_task = tokio::spawn(async move {
+        loop {
+            let message = read_frame(&mut reader).await?;
+            if frame_tx.send(message).await.is_err() {
+                return Err(anyhow!("agent control reader consumer dropped"));
+            }
         }
     });
-    let mut control_reader_consumed = false;
 
-    let result = loop {
+    // All control writes go through one writer task so Open and Pong frames
+    // never interleave, and every write is bounded: a blackholed connection
+    // cannot wedge the handler forever.
+    let (writer_tx, mut writer_rx) = mpsc::channel(CONTROL_FRAME_CHANNEL_CAPACITY);
+    let mut writer_task = tokio::spawn(async move {
+        while let Some(message) = writer_rx.recv().await {
+            timeout(
+                timing.heartbeat.write_timeout,
+                write_frame(&mut writer, &message),
+            )
+            .await
+            .map_err(|_| anyhow!("timed out writing control frame to agent"))??;
+        }
+        Ok(())
+    });
+
+    let mut last_agent_frame = Instant::now();
+    let mut reader_consumed = false;
+    let mut writer_consumed = false;
+    let result: Result<()> = loop {
         tokio::select! {
             _ = &mut shutdown_rx => {
                 break Err(anyhow!("agent connection replaced by a newer client"));
@@ -409,33 +512,61 @@ async fn handle_agent(stream: RelayStream, state: State, device_id: String) -> R
                 let Some(request) = request else {
                     break Ok(());
                 };
-                let message = Message::Open {
-                    session_id: request.session_id.clone(),
-                };
-                let write_result = tokio::select! {
-                    _ = &mut shutdown_rx => Err(anyhow!("agent connection replaced by a newer client")),
-                    result = write_frame(&mut writer, &message) => result,
-                };
-                if let Err(error) = write_result {
-                    break Err(error);
+                if writer_tx
+                    .send(Message::Open {
+                        session_id: request.session_id,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break Err(anyhow!("agent control writer ended"));
                 }
             }
-            control_result = &mut control_reader => {
-                // Polling a JoinHandle to completion consumes its result.  Do
+            frame = frame_rx.recv() => match frame {
+                Some(Message::Ping) => {
+                    last_agent_frame = Instant::now();
+                    if writer_tx.send(Message::Pong).await.is_err() {
+                        break Err(anyhow!("agent control writer ended"));
+                    }
+                }
+                Some(other) => break Err(anyhow!("unexpected agent control message: {other:?}")),
+                None => break Err(anyhow!("agent control reader ended")),
+            },
+            result = &mut reader_task, if !reader_consumed => {
+                // Polling a JoinHandle to completion consumes its result. Do
                 // not await the same handle again during cleanup: Tokio
                 // treats that as a second poll and panics.
-                control_reader_consumed = true;
-                break match control_result {
-                    Ok(result) => result,
-                    Err(error) => Err(anyhow!("agent control watcher failed: {error}")),
+                reader_consumed = true;
+                break match result {
+                    Ok(Ok(())) => Err(anyhow!("agent control reader ended")),
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(anyhow!("agent control reader task failed: {error}")),
                 };
+            }
+            result = &mut writer_task, if !writer_consumed => {
+                writer_consumed = true;
+                break match result {
+                    Ok(Ok(())) => Err(anyhow!("agent control writer ended")),
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(anyhow!("agent control writer task failed: {error}")),
+                };
+            }
+            _ = sleep_until(last_agent_frame + timing.heartbeat.dead_after), if heartbeat => {
+                break Err(anyhow!(
+                    "agent heartbeat timed out after {:?}",
+                    timing.heartbeat.dead_after
+                ));
             }
         }
     };
 
-    if !control_reader_consumed {
-        control_reader.abort();
-        let _ = control_reader.await;
+    if !reader_consumed {
+        reader_task.abort();
+        let _ = reader_task.await;
+    }
+    if !writer_consumed {
+        writer_task.abort();
+        let _ = writer_task.await;
     }
     fail_pending(&device, "device control connection ended".to_owned()).await;
     unregister(&state, &device_id, &device).await;
@@ -455,14 +586,17 @@ async fn handle_agent_session(
     mut stream: RelayStream,
     state: State,
     device_id: String,
+    permit: OwnedSemaphorePermit,
 ) -> Result<()> {
-    let session_id = match read_frame(&mut stream).await? {
-        Message::SessionAttach { session_id } => session_id,
-        other => {
+    let session_id = match timeout(state.timing.attach_timeout, read_frame(&mut stream)).await {
+        Ok(Ok(Message::SessionAttach { session_id })) => session_id,
+        Ok(Ok(other)) => {
             return Err(anyhow!(
                 "agent session did not send an attach request: {other:?}"
             ))
         }
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Err(anyhow!("timed out waiting for session attach")),
     };
     let device = {
         let devices = state.devices.lock().await;
@@ -504,33 +638,45 @@ async fn handle_agent_session(
         return Err(error);
     }
 
-    match read_frame(&mut stream).await {
-        Ok(Message::Ready { session_id: id }) if id == session_id => {
-            let _ = response_tx.send(Ok(stream));
+    // The Ready deadline ends the establishment phase; once the stream is
+    // handed to the controller it becomes ordinary data forwarding without
+    // any fixed time limit.
+    match timeout(state.timing.ready_timeout, read_frame(&mut stream)).await {
+        Ok(Ok(Message::Ready { session_id: id })) if id == session_id => {
+            let _ = response_tx.send(Ok((stream, permit)));
             Ok(())
         }
-        Ok(Message::Failed {
+        Ok(Ok(Message::Failed {
             session_id: id,
             reason,
-        }) if id == session_id => {
+        })) if id == session_id => {
             let _ = response_tx.send(Err(reason));
             Ok(())
         }
-        Ok(other) => {
+        Ok(Ok(other)) => {
             let reason = format!("unexpected agent session response: {other:?}");
             let _ = response_tx.send(Err(reason.clone()));
             Err(anyhow!(reason))
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             let reason = format!("agent session ended before ready: {error}");
             let _ = response_tx.send(Err(reason));
             Err(error)
+        }
+        Err(_) => {
+            let reason = "agent session did not become ready in time".to_owned();
+            let _ = response_tx.send(Err(reason.clone()));
+            Err(anyhow!(reason))
         }
     }
 }
 
 async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> {
-    let request = read_frame(&mut stream).await?;
+    let request = match timeout(state.timing.request_timeout, read_frame(&mut stream)).await {
+        Ok(Ok(request)) => request,
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Err(anyhow!("timed out waiting for controller request")),
+    };
     let request = match request {
         Message::ListRequest => {
             let mut devices: Vec<DeviceInfo> = {
@@ -580,45 +726,34 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
         return Ok(());
     }
 
-    if device
-        .open_tx
-        .send(OpenRequest {
-            session_id: session_id.clone(),
-        })
-        .await
-        .is_err()
-    {
-        if let Some(response_tx) = take_pending(&device, &session_id).await {
-            let _ = response_tx.send(Err(
-                "device agent disconnected before session started".to_owned()
-            ));
-        }
-        write_frame(
-            &mut stream,
-            &Message::Failed {
-                session_id,
-                reason: "device agent disconnected before session started".to_owned(),
-            },
-        )
-        .await?;
-        return Ok(());
-    }
+    // One absolute deadline covers queuing the Open, writing it to the agent
+    // control channel, and the agent response. Only the establishment phase
+    // is bounded; the data stream that follows is not.
+    let open_result = timeout(state.timing.open_timeout, async {
+        device
+            .open_tx
+            .send(OpenRequest {
+                session_id: session_id.clone(),
+            })
+            .await
+            .map_err(|_| "device agent disconnected before session started".to_owned())?;
+        response_rx
+            .await
+            .map_err(|_| "agent closed before accepting session".to_owned())
+    })
+    .await;
 
-    let agent_stream = match timeout(Duration::from_secs(15), response_rx).await {
-        Ok(Ok(Ok(agent_stream))) => agent_stream,
+    let agent_stream = match open_result {
+        Ok(Ok(Ok((agent_stream, agent_permit)))) => (agent_stream, agent_permit),
         Ok(Ok(Err(reason))) => {
             write_frame(&mut stream, &Message::Failed { session_id, reason }).await?;
             return Ok(());
         }
-        Ok(Err(_)) => {
-            write_frame(
-                &mut stream,
-                &Message::Failed {
-                    session_id,
-                    reason: "agent closed before accepting session".to_owned(),
-                },
-            )
-            .await?;
+        Ok(Err(reason)) => {
+            if let Some(response_tx) = take_pending(&device, &session_id).await {
+                let _ = response_tx.send(Err(reason.clone()));
+            }
+            write_frame(&mut stream, &Message::Failed { session_id, reason }).await?;
             return Ok(());
         }
         Err(_) => {
@@ -627,13 +762,17 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
                 &mut stream,
                 &Message::Failed {
                     session_id,
-                    reason: "agent did not respond within 15 seconds".to_owned(),
+                    reason: format!(
+                        "agent did not respond within {} seconds",
+                        state.timing.open_timeout.as_secs()
+                    ),
                 },
             )
             .await?;
             return Ok(());
         }
     };
+    let (agent_stream, _agent_permit) = agent_stream;
 
     write_frame(&mut stream, &Message::Ready { session_id }).await?;
     bridge::bidirectional(stream, agent_stream).await
@@ -642,7 +781,7 @@ async fn handle_controller(mut stream: RelayStream, state: State) -> Result<()> 
 async fn register_pending(
     device: &Arc<Device>,
     session_id: &str,
-    response_tx: oneshot::Sender<std::result::Result<RelayStream, String>>,
+    response_tx: oneshot::Sender<SessionHandoff>,
 ) -> bool {
     let mut pending = device.pending.lock().await;
     if pending.len() >= MAX_PENDING_SESSIONS_PER_DEVICE || pending.contains_key(session_id) {
@@ -655,7 +794,7 @@ async fn register_pending(
 async fn take_pending(
     device: &Arc<Device>,
     session_id: &str,
-) -> Option<oneshot::Sender<std::result::Result<RelayStream, String>>> {
+) -> Option<oneshot::Sender<SessionHandoff>> {
     device.pending.lock().await.remove(session_id)
 }
 

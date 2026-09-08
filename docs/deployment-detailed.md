@@ -24,9 +24,9 @@ Windows Rust-SSH-Client ──主动 TCP/Noise──> Ubuntu rust-ssh-server:244
 
 运行 GitHub Release 中的二进制不需要 Rust。只有从源码编译时才需要 Rust 和 Cargo。
 
-v0.5.5 修复了加密帧被 TCP 分段传输时读取状态丢失的问题，避免 VS Code Remote-SSH 发送启动脚本后卡住或报 `invalid encrypted relay frame length`。请将三端都升级到 v0.5.5；此修复没有改变协议或配置码格式，已有密钥和配置可继续使用。详情见 [更新日志](../CHANGELOG.md)。
+v0.5.5 修复了加密帧被 TCP 分段传输时读取状态丢失的问题，避免 VS Code Remote-SSH 发送启动脚本后卡住或报 `invalid encrypted relay frame length`。v0.5.6 增加控制通道心跳与自动恢复、建连阶段安全期限和秘密文件权限修复：控制通道失效时已建立的会话不再受影响，Client 自动重连后新会话恢复。请将三端都升级到 v0.5.6；协议和配置码格式没有变化，已有密钥和配置可继续使用。详情见 [更新日志](../CHANGELOG.md)。
 
-支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器暂时不可用时持续自动重连；v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题；v0.5.2 修复服务器残留断开设备状态的问题、略微增加两个 Windows GUI 的初始高度，并让 MSI 在升级前提醒用户后强制结束对应的旧 GUI 进程；v0.5.3 禁止主控 SSH 连接复用、增强并发会话 ID 的唯一性，并修复 VS Code Remote-SSH 非交互脚本输入结束时代理过早断开的问题；v0.5.4 在两个 Windows GUI 中显示当前版本，并修复 relay 清理已结束控制任务时的重复轮询问题。升级到 v0.5.x 时，server、Windows client、macOS/Windows connect 必须一起升级；旧版程序不能与新协议互通。
+支持同一 client 同时打开多个 SSH 终端的版本引入了新的 agent session 通道。v0.5.0 还会让 Client 在网络或服务器暂时不可用时持续自动重连；v0.5.1 修复 Windows GUI 退出和 MSI 覆盖升级时旧进程残留的问题；v0.5.2 修复服务器残留断开设备状态的问题、略微增加两个 Windows GUI 的初始高度，并让 MSI 在升级前提醒用户后强制结束对应的旧 GUI 进程；v0.5.3 禁止主控 SSH 连接复用、增强并发会话 ID 的唯一性，并修复 VS Code Remote-SSH 非交互脚本输入结束时代理过早断开的问题；v0.5.4 在两个 Windows GUI 中显示当前版本，并修复 relay 清理已结束控制任务时的重复轮询问题。v0.5.0–v0.5.5 需要三端一起升级，旧版程序不能与新协议互通；v0.5.6 通过 `features` 能力协商可以与旧版本混用，但控制通道心跳与自动恢复只有在三端都升级到 v0.5.6 后才生效。
 
 ## 1. 准备服务器信息
 
@@ -178,7 +178,7 @@ sudo ufw allow 24443/tcp
 Rust-SSH-Client-windows-x86_64.msi
 ```
 
-Release 不提供单独的 Windows `.exe`。MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client`，也可以选择其他安装目录；它会创建开始菜单入口。以后安装更高版本 MSI 可以覆盖升级。Rust-SSH-Client 的配置会保存在所选安装目录下的 `data` 文件夹中；安装器只给 `data` 文件夹写权限，程序本体仍受 `Program Files` 保护。
+Release 不提供单独的 Windows `.exe`。MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client`，也可以选择其他安装目录；它会创建开始菜单入口。以后安装更高版本 MSI 可以覆盖升级。v0.5.6 起 Rust-SSH-Client 的配置保存在当前用户的 `%LOCALAPPDATA%\rust-ssh` 文件夹中，不再放在安装目录；该目录默认只有当前用户能读写，程序本体仍受 `Program Files` 保护。升级后首次启动会自动迁移旧版安装目录 `data` 中的配置。
 
 第一次打开时，client GUI 会显示类似下面的设备 ID：
 
@@ -189,7 +189,7 @@ rssh-0123456789abcdef0123456789abcdef
 点击“复制”，把这串 ID 交给服务器管理员。这个 ID：
 
 - 由 client 首次运行时随机生成；
-- 保存在 `<client安装目录>\data\client.json`；
+- 保存在 `%LOCALAPPDATA%\rust-ssh\client.json`；
 - 不使用 Windows 的 `COMPUTERNAME` 或主机名；
 - 不会因修改 Windows 主机名而变化；
 - 不是秘密，单独知道它不能通过认证。
@@ -300,7 +300,7 @@ Release 文件已经包含运行所需的 Rust 代码；主控端不需要安装
 chmod +x Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码保存在 `<connect安装目录>\data`；MSI 安装路径会被 GUI 自动写入 SSH 配置。Connect 会常驻 Windows 右下角托盘，关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。不要移动安装目录中的程序文件，否则需要重新点击“配置 SSH”。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。v0.5.6 起配置和配置码保存在当前用户的 `%LOCALAPPDATA%\rust-ssh`，不再放在安装目录；升级后首次启动会自动迁移旧版安装目录 `data` 中的 `connect.json`、`connect.setup`，并把已有 SSH 配置里受管理区块的 ProxyCommand `--setup-code-file` 路径自动改写到新位置，无需重新点击“配置 SSH”。Connect 会常驻 Windows 右下角托盘，关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。不要移动安装目录中的程序文件。
 
 Client 和 Connect 都使用单实例锁，重复启动只会保留一个 GUI；Connect 的 SSH `ProxyCommand` 子进程不受此限制，因此多个 Terminal/VS Code 连接不会被拦截。升级 MSI 时安装器会直接结束旧 GUI 进程，避免旧程序隐藏到托盘后阻塞覆盖安装；如果升级时已有 SSH 窗口，正在进行的会话会被中断。历史版本留下的旧任务栏固定图标可能需要手动取消固定一次，再固定新版本的开始菜单图标。
 
@@ -328,7 +328,7 @@ connect 的配置文件位置：
 
 ```text
 macOS：~/.config/rust-ssh/connect.json
-Windows：<connect安装目录>\data\connect.json
+Windows：%LOCALAPPDATA%\rust-ssh\connect.json
 ```
 
 配置 SSH 后，connect 会在系统 SSH 配置中写入一个受管理区块：
@@ -369,21 +369,21 @@ Rust-SSH 不配置 SSH 免密，也不读取或保存主控端私钥。需要免
 ### 5.2 Windows client
 
 ```text
-C:\Program Files\Rust-SSH-Client\data\client.json
+%LOCALAPPDATA%\rust-ssh\client.json
 ```
 
-也可以是安装向导中选择的其他目录。安装器只给 `data` 文件夹写权限，程序本体仍受 `Program Files` 保护。其中保存设备 ID、设备配置码和本地 SSH 目标。设备配置码包含设备 token，应当按秘密材料保护。
+v0.5.6 起配置保存在当前用户的 LocalAppData 目录，默认只有当前用户能读写；程序本体仍受 `Program Files` 保护。其中保存设备 ID、设备配置码和本地 SSH 目标。设备配置码包含设备 token，应当按秘密材料保护。
 
-注意：为了让普通用户在 `Program Files` 安装位置下保存配置，安装器会给 `data` 文件夹授予本机 `Users` 组读写权限。单用户个人电脑通常没有问题；如果多个人共用这台 Windows 电脑，本机其他用户可能读取该目录中的设备配置码。
+v0.5.5 及更早版本把配置保存在安装目录下的共享 `data` 文件夹中（本机 `Users` 组可读写）。升级到 v0.5.6 后配置会自动迁移；旧 `data` 文件夹和其中的文件不会自动删除，确认所有账户都已升级后，管理员可以手动清理它们。
 
 ### 5.3 Mac / Windows connect
 
 ```text
 macOS：~/.config/rust-ssh/connect.json
-Windows：C:\Program Files\Rust-SSH-Connect\data\connect.json
+Windows：%LOCALAPPDATA%\rust-ssh\connect.json
 ```
 
-Windows 也可以是安装向导中选择的其他目录。安装器只给 `data` 文件夹写权限。其中保存 controller 配置码。它的权限等同于 controller token，不要复制给 client。
+其中保存 controller 配置码。它的权限等同于 controller token，不要复制给 client。macOS 下配置目录权限为 0700、文件为 0600。
 
 ## 6. 添加第二台或更多 Windows client
 
@@ -463,7 +463,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now rust-ssh-server
 ```
 
-旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。Windows Rust-SSH-Client/Rust-SSH-Connect 使用 MSI；新版本首次启动时会把旧版 `%APPDATA%\rust-ssh` 或旧 MSI 的默认 `LocalAppData` 配置迁移到当前安装目录的 `data` 文件夹。
+v0.5.6 起三端可以与旧版本混用（心跳通过 `features` 能力协商，旧端不参与），但控制通道失效自动恢复只在三端都升级后完整生效。建议顺序：先升级 server，再升级被控端 Windows Client，最后升级主控端 Connect。重启 server 会断开所有现有 SSH 会话（包括正在下载的会话），请避开重要传输窗口；Client 会在 server 恢复后自动重连控制通道。
+
+旧版 client 配置没有 v0.4 配置版本标记。v0.4 client 首次打开时会生成新的随机设备 ID，并清空旧设备配置码；这是为了避免继续使用依赖主机名的旧身份。需要按第 3 节重新 `device add`。旧 token 文件可以暂时保留，确认旧 client 不再使用后再移走。
+
+Windows Rust-SSH-Client/Rust-SSH-Connect 使用 MSI。v0.5.6 起配置目录是 `%LOCALAPPDATA%\rust-ssh`；新版本首次启动时会自动把以下旧位置中的配置迁移过去（目标文件已存在时不覆盖）：旧安装目录的 `data` 文件夹、`%APPDATA%\rust-ssh`、旧 MSI 的 `%LOCALAPPDATA%\rust-ssh-client` / `rust-ssh-connect`。Connect 还会把旧安装目录 `data` 中的 `connect.setup` 复制到新位置，并把已有 SSH 配置受管理区块中 ProxyCommand 的 `--setup-code-file` 路径自动改写到新位置，无需重新点击“配置 SSH”。
 
 ### 7.4 替换 controller token
 
@@ -491,7 +495,7 @@ C:\Program Files\Rust-SSH-Connect
 
 1. 如果旧 client 仍在运行，先在任务管理器结束旧的 `rust-ssh-client.exe`；
 2. 在“设置 → 应用 → 已安装的应用”中卸载旧的 `rust-ssh client`、`rust-ssh connect` 或失败安装留下的同名条目；
-3. 确认新安装目录下的 `data` 已保留后，才删除旧目录：`C:\Program Files\rust-ssh`、`%LOCALAPPDATA%\rust-ssh-client`、`%LOCALAPPDATA%\rust-ssh-connect`；不要删除 `C:\Program Files\Rust-SSH-Client` 或 `C:\Program Files\Rust-SSH-Connect`，它们是新版本的目录；
+3. v0.5.6 起程序不再使用安装目录下的 `data` 文件夹。确认 `%LOCALAPPDATA%\rust-ssh` 中的配置和 SSH 连接都正常后，旧安装目录下的 `data` 文件夹可以手动删除（其中可能还留有 v0.5.5 及更早的 `connect.setup`，先确认本机没有其他账户还在使用旧配置再删除）；旧的 `C:\Program Files\rust-ssh`、`%LOCALAPPDATA%\rust-ssh-client`、`%LOCALAPPDATA%\rust-ssh-connect` 目录清理后即可删除；不要删除 `C:\Program Files\Rust-SSH-Client` 或 `C:\Program Files\Rust-SSH-Connect`，它们是新版本的目录；
 4. `%APPDATA%\rust-ssh` 里的旧配置确认已迁移后再删除；如果不确定，先保留它；
 5. 不要删除 `%USERPROFILE%\.ssh\config` 整个文件。若要清理旧 SSH 条目，只删除 `# >>> rust-ssh managed begin >>>` 到 `# <<< rust-ssh managed end <<<` 之间的区块，其他 SSH 配置要保留。
 

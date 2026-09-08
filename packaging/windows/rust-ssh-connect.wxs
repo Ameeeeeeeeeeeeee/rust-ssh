@@ -9,7 +9,6 @@
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <Feature Id="MainFeature" Title="Rust-SSH-Connect" Level="1">
       <ComponentRef Id="ConnectExecutable" />
-      <ComponentRef Id="ConnectData" />
       <ComponentRef Id="ConnectShortcut" />
     </Feature>
   </Package>
@@ -20,21 +19,13 @@
     </InstallExecuteSequence>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Connect">
-        <Directory Id="DataFolder" Name="data" />
-      </Directory>
+      <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Connect" />
     </StandardDirectory>
 
     <Component Id="ConnectExecutable" Directory="INSTALLFOLDER" Guid="4180610f-b77c-43ea-9c24-7c6a741efc50">
       <File Id="ConnectExe" Source="$(var.BinaryPath)" KeyPath="yes" />
       <RemoveFile Id="RemoveConnectExecutable" Name="rust-ssh-connect.exe" On="uninstall" />
       <RemoveFolder Id="RemoveConnectInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
-    </Component>
-
-    <Component Id="ConnectData" Directory="DataFolder" Guid="b58b37ca-2f4c-4b07-a3e1-a5eebf9b7c1d">
-      <CreateFolder>
-        <util:PermissionEx User="Users" GenericAll="yes" />
-      </CreateFolder>
     </Component>
 
     <StandardDirectory Id="ProgramMenuFolder">

@@ -60,7 +60,11 @@ pub fn generate(private_path: &Path, public_path: &Path) -> Result<()> {
         .map_err(|error| anyhow!("generating Noise server identity key: {error}"))?;
     let public_key = format!("{}\n", hex::encode(&keypair.public));
 
-    write_new(private_path, &keypair.private)
+    // The private key is created with 0600 from the start so it is never
+    // briefly world-readable on disk. The public key is not secret and keeps
+    // the default creation mode. Deployments that let a service user read
+    // the key (root:rustssh, 0640) apply that explicitly afterwards.
+    write_new_private(private_path, &keypair.private)
         .with_context(|| format!("writing private identity key {}", private_path.display()))?;
     write_new(public_path, public_key.as_bytes())
         .with_context(|| format!("writing public identity key {}", public_path.display()))?;
@@ -129,6 +133,20 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn write_new_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +157,33 @@ mod tests {
         assert_eq!(keypair.private.len(), STATIC_KEY_SIZE);
         assert_eq!(keypair.public.len(), STATIC_KEY_SIZE);
         assert!(decode_public_key(&hex::encode(&keypair.public)).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_private_key_is_not_readable_by_others() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("rust-ssh-keygen-mode-test-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let private_path = root.join("identity.key");
+        let public_path = root.join("identity.pub");
+
+        generate(&private_path, &public_path).unwrap();
+
+        let private_mode = fs::metadata(&private_path).unwrap().permissions().mode();
+        let public_mode = fs::metadata(&public_path).unwrap().permissions().mode();
+        assert_eq!(
+            private_mode & 0o777,
+            0o600,
+            "private key must be created 0600"
+        );
+        assert_eq!(
+            public_mode & 0o022,
+            0,
+            "public key must not be group/other writable"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

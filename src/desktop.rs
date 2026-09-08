@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -532,6 +533,7 @@ pub struct ConnectApp {
     status: String,
     connection_state: ClientConnectionState,
     refresh_rx: Option<Receiver<std::result::Result<Vec<String>, String>>>,
+    refresh_cancel: Option<oneshot::Sender<()>>,
     last_refresh: Instant,
     first_update: bool,
     host_editor: Option<HostAliasEditor>,
@@ -556,6 +558,8 @@ impl ConnectApp {
         let tray_signals = Arc::new(TraySignals::default());
         #[cfg(windows)]
         install_tray_event_handlers(&tray_signals, &creation_context.egui_ctx);
+        #[cfg(windows)]
+        migrate_setup_code_file();
         Self {
             settings: load_settings("connect.json"),
             devices: Vec::new(),
@@ -563,6 +567,7 @@ impl ConnectApp {
             status: "请粘贴配置码".to_owned(),
             connection_state: ClientConnectionState::Stopped,
             refresh_rx: None,
+            refresh_cancel: None,
             last_refresh: Instant::now(),
             first_update: true,
             host_editor: None,
@@ -614,16 +619,22 @@ impl ConnectApp {
         }
 
         let (sender, receiver) = mpsc::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        self.refresh_cancel = Some(cancel_tx);
         thread::spawn(move || {
             let result = match Runtime::new() {
-                Ok(runtime) => runtime
-                    .block_on(connect::list_devices(ListConfig {
-                        server: pairing.server,
-                        server_key: pairing.server_key,
-                        token: pairing.token,
-                    }))
-                    .map(|devices| devices.into_iter().map(|device| device.device_id).collect())
-                    .map_err(|error| error.to_string()),
+                Ok(runtime) => runtime.block_on(async {
+                    tokio::select! {
+                        result = connect::list_devices(ListConfig {
+                            server: pairing.server,
+                            server_key: pairing.server_key,
+                            token: pairing.token,
+                        }) => result
+                            .map(|devices| devices.into_iter().map(|device| device.device_id).collect())
+                            .map_err(|error| error.to_string()),
+                        _ = cancel_rx => Err("刷新已取消".to_owned()),
+                    }
+                }),
                 Err(error) => Err(error.to_string()),
             };
             let _ = sender.send(result);
@@ -641,6 +652,7 @@ impl ConnectApp {
         };
         match receiver.try_recv() {
             Ok(Ok(devices)) => {
+                self.refresh_cancel = None;
                 let previous = self.selected_device.clone();
                 self.devices = devices;
                 self.selected_device =
@@ -652,6 +664,7 @@ impl ConnectApp {
                 self.last_refresh = Instant::now();
             }
             Ok(Err(error)) => {
+                self.refresh_cancel = None;
                 self.set_connection_state(
                     ClientConnectionState::Error,
                     format!("查找失败：{error}"),
@@ -660,6 +673,7 @@ impl ConnectApp {
             }
             Err(TryRecvError::Empty) => self.refresh_rx = Some(receiver),
             Err(TryRecvError::Disconnected) => {
+                self.refresh_cancel = None;
                 self.set_connection_state(
                     ClientConnectionState::Error,
                     "查找线程已退出".to_owned(),
@@ -773,10 +787,7 @@ impl ConnectApp {
     fn validate_connection(&self) -> Result<()> {
         bootstrap::decode(&self.settings.pairing_code)?;
         let user = required_value(&self.settings.user, "SSH 用户名")?;
-        if user.chars().any(char::is_whitespace) {
-            return Err(anyhow!("SSH 用户名不能包含空白字符"));
-        }
-        Ok(())
+        validate_ssh_user(&user)
     }
 
     #[cfg(windows)]
@@ -798,6 +809,16 @@ impl ConnectApp {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             context.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             self.status = "窗口已隐藏到托盘，Connect 仍可用于 SSH/VS Code".to_owned();
+        }
+    }
+}
+
+impl Drop for ConnectApp {
+    fn drop(&mut self) {
+        // Ask a running background refresh to stop instead of leaving it
+        // blocked until its deadline.
+        if let Some(cancel) = self.refresh_cancel.take() {
+            let _ = cancel.send(());
         }
     }
 }
@@ -1197,6 +1218,18 @@ fn required_value(value: &str, label: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
+/// SSH user names are written verbatim into the generated SSH config; reject
+/// anything that could add extra directives there.
+fn validate_ssh_user(user: &str) -> Result<()> {
+    if user
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(anyhow!("SSH 用户名不能包含空白或控制字符"));
+    }
+    Ok(())
+}
+
 fn load_settings<T>(name: &str) -> T
 where
     T: DeserializeOwned + Default,
@@ -1235,20 +1268,80 @@ where
     let directory = config_dir();
     fs::create_dir_all(&directory)
         .with_context(|| format!("创建配置目录 {}", directory.display()))?;
+    set_private_dir_permissions(&directory)?;
     let path = directory.join(name);
     let text = serde_json::to_vec_pretty(settings).context("编码 GUI 配置")?;
-    fs::write(&path, text).with_context(|| format!("写入 GUI 配置 {}", path.display()))
+    write_private_file(&path, &text)
+}
+
+/// Write through a temporary file and atomically replace the destination.
+/// On Unix the temp file is created 0600 so the content is never briefly
+/// readable by other users; on Windows the per-user AppData ACL applies.
+/// A failed write leaves the previous file untouched.
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("配置文件路径无效"))?;
+    let temporary = path.with_file_name(format!(
+        "{file_name}.tmp-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    let write_result = (|| -> Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temporary)
+            .with_context(|| format!("创建临时文件 {}", temporary.display()))?;
+        file.write_all(bytes)
+            .with_context(|| format!("写入临时文件 {}", temporary.display()))?;
+        file.flush()
+            .with_context(|| format!("写入临时文件 {}", temporary.display()))?;
+        Ok(())
+    })();
+    match write_result {
+        Ok(()) => match fs::rename(&temporary, path) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                Err(error).with_context(|| format!("替换配置文件 {}", path.display()))
+            }
+        },
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(error)
+        }
+    }
+}
+
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("保护配置目录 {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_private_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn config_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        if let Ok(executable) = std::env::current_exe() {
-            if let Some(parent) = executable.parent() {
-                return parent.join("data");
-            }
+        // Keep secrets out of a shared Program Files directory. LOCALAPPDATA
+        // is per-user with a user-only ACL by default; it also avoids roaming
+        // the machine-specific device ID across machines.
+        if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(path).join("rust-ssh");
         }
-
         if let Some(path) = std::env::var_os("APPDATA") {
             return PathBuf::from(path).join("rust-ssh");
         }
@@ -1261,52 +1354,149 @@ fn config_dir() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn migrate_legacy_config(name: &str) {
-    let directory = config_dir();
-    let mut source_directories = Vec::new();
+fn legacy_config_sources(name: &str) -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    // v0.5.5 and earlier stored configuration in a shared `data` directory
+    // next to the executable (typically Program Files\...\data).
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            sources.push(parent.join("data"));
+        }
+    }
+    // Even older per-app directories.
     if let Some(path) = std::env::var_os("LOCALAPPDATA") {
         let path = PathBuf::from(path);
         match name {
             "client.json" => {
-                source_directories.push(path.join("rust-ssh-client").join("data"));
+                sources.push(path.join("rust-ssh-client").join("data"));
             }
             "connect.json" | "connect.setup" => {
-                source_directories.push(path.join("rust-ssh-connect").join("data"));
+                sources.push(path.join("rust-ssh-connect").join("data"));
             }
             _ => {}
         }
     }
     if let Some(path) = std::env::var_os("APPDATA") {
-        source_directories.push(PathBuf::from(path).join("rust-ssh"));
+        sources.push(PathBuf::from(path).join("rust-ssh"));
     }
+    sources
+}
 
-    for source_directory in source_directories {
-        if source_directory == directory {
-            continue;
-        }
-        let source = source_directory.join(name);
-        let destination = directory.join(name);
-        if !source.is_file() || destination.exists() {
-            continue;
-        }
-        if let Err(error) = fs::create_dir_all(&directory) {
-            tracing::warn!(%error, path = %directory.display(), "could not create Rust-SSH data directory");
-            return;
-        }
-        match fs::copy(&source, &destination) {
-            Ok(_) => {
-                tracing::info!(file = name, path = %directory.display(), "migrated old Rust-SSH data file")
-            }
-            Err(error) => {
-                tracing::warn!(%error, file = name, "could not migrate old Rust-SSH data file")
-            }
-        }
-        break;
-    }
+#[cfg(windows)]
+fn migrate_legacy_config(name: &str) {
+    let directory = config_dir();
+    migrate_config_file(name, &legacy_config_sources(name), &directory);
 }
 
 #[cfg(not(windows))]
 fn migrate_legacy_config(_name: &str) {}
+
+/// Copy `name` from the first source directory that has it into
+/// `destination_dir`, without overwriting an existing destination file.
+/// Returns the destination path when a copy happened.
+fn migrate_config_file(name: &str, sources: &[PathBuf], destination_dir: &Path) -> Option<PathBuf> {
+    for source_directory in sources {
+        if source_directory == destination_dir {
+            continue;
+        }
+        let source = source_directory.join(name);
+        let destination = destination_dir.join(name);
+        if !source.is_file() || destination.exists() {
+            continue;
+        }
+        if let Err(error) = fs::create_dir_all(destination_dir) {
+            tracing::warn!(%error, path = %destination_dir.display(), "could not create Rust-SSH data directory");
+            return None;
+        }
+        match fs::copy(&source, &destination) {
+            Ok(_) => {
+                tracing::info!(file = name, path = %destination_dir.display(), "migrated old Rust-SSH data file");
+                return Some(destination);
+            }
+            Err(error) => {
+                tracing::warn!(%error, file = name, "could not migrate old Rust-SSH data file");
+                return None;
+            }
+        }
+    }
+    None
+}
+
+/// Path of the connect.setup file written by v0.5.5 and earlier.
+#[cfg(windows)]
+fn legacy_setup_code_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    Some(executable.parent()?.join("data").join("connect.setup"))
+}
+
+/// On first run after the configuration move, bring the old setup-code file
+/// along and repoint managed ProxyCommand entries at the new location. The
+/// old file is deliberately left in place: other accounts on the machine may
+/// still use it, and removing shared files is left to the administrator.
+#[cfg(windows)]
+fn migrate_setup_code_file() {
+    let Some(old_path) = legacy_setup_code_path() else {
+        return;
+    };
+    if !old_path.is_file() {
+        return;
+    }
+    let directory = config_dir();
+    let old_sources = old_path
+        .parent()
+        .map(|parent| vec![parent.to_path_buf()])
+        .unwrap_or_default();
+    let _ = migrate_config_file("connect.setup", &old_sources, &directory);
+    let new_path = directory.join("connect.setup");
+    let (Some(old_text), Some(new_text)) = (old_path.to_str(), new_path.to_str()) else {
+        tracing::warn!("could not rewrite legacy SSH ProxyCommand: path is not valid UTF-8");
+        return;
+    };
+    if let Err(error) = rewrite_setup_path_in_ssh_config(old_text, new_text) {
+        tracing::warn!(%error, "could not update managed SSH ProxyCommand path");
+    }
+}
+
+#[cfg(windows)]
+fn rewrite_setup_path_in_ssh_config(old_path: &str, new_path: &str) -> Result<()> {
+    let path = user_ssh_config_path()?;
+    if !path.is_file() {
+        return Ok(());
+    }
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("读取 SSH 配置 {}", path.display()))?;
+    let rewritten = rewrite_setup_path_in_managed_block(&text, old_path, new_path);
+    if rewritten != text {
+        fs::write(&path, &rewritten)
+            .with_context(|| format!("写入 SSH 配置 {}", path.display()))?;
+        set_private_permissions(&path)?;
+    }
+    Ok(())
+}
+
+/// Replace an old setup-code path with the new one inside the managed rust-ssh
+/// block only; user-written config outside the block is never touched.
+fn rewrite_setup_path_in_managed_block(text: &str, old_path: &str, new_path: &str) -> String {
+    let Some(begin) = text.find(MANAGED_SSH_BEGIN) else {
+        return text.to_owned();
+    };
+    let after_begin = &text[begin + MANAGED_SSH_BEGIN.len()..];
+    let Some(end_offset) = after_begin.find(MANAGED_SSH_END) else {
+        return text.to_owned();
+    };
+    let managed = &after_begin[..end_offset];
+    if !managed.contains(old_path) {
+        return text.to_owned();
+    }
+    let managed = managed.replace(old_path, new_path);
+    format!(
+        "{}{}{}{}",
+        &text[..begin],
+        MANAGED_SSH_BEGIN,
+        managed,
+        &after_begin[end_offset..]
+    )
+}
 
 fn new_device_id() -> String {
     device_id::generate().unwrap_or_else(|error| {
@@ -1347,6 +1537,7 @@ fn install_ssh_host(settings: &ConnectSettings, device_id: &str) -> Result<Strin
         .to_str()
         .ok_or_else(|| anyhow!("配置码文件路径不是有效 UTF-8"))?;
     let user = required_value(&settings.user, "SSH 用户名")?;
+    validate_ssh_user(&user)?;
     let host = settings
         .host_aliases
         .get(device_id)
@@ -1499,9 +1690,9 @@ fn write_setup_code_file(code: &str) -> Result<PathBuf> {
     let directory = config_dir();
     fs::create_dir_all(&directory)
         .with_context(|| format!("创建配置目录 {}", directory.display()))?;
+    set_private_dir_permissions(&directory)?;
     let path = directory.join("connect.setup");
-    fs::write(&path, code).with_context(|| format!("写入配置码文件 {}", path.display()))?;
-    set_private_permissions(&path)?;
+    write_private_file(&path, code.as_bytes())?;
     Ok(path)
 }
 
@@ -1637,5 +1828,118 @@ mod tests {
         assert_eq!(text.matches(MANAGED_SSH_BEGIN).count(), 1);
         assert_eq!(text.matches(MANAGED_SSH_END).count(), 1);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn ssh_user_rejects_whitespace_and_control_characters() {
+        assert!(validate_ssh_user("windows-user").is_ok());
+        assert!(validate_ssh_user("user-1").is_ok());
+        assert!(validate_ssh_user("user 1").is_err());
+        assert!(validate_ssh_user("user\nsecond").is_err());
+        assert!(validate_ssh_user("user\tname").is_err());
+        assert!(validate_ssh_user("user\u{1b}escape").is_err());
+    }
+
+    #[test]
+    fn setup_path_rewrite_stays_inside_the_managed_block() {
+        let old_path = r"C:\Program Files\Rust-SSH-Connect\data\connect.setup";
+        let new_path = r"C:\Users\demo\AppData\Local\rust-ssh\connect.setup";
+        let text = format!(
+            "Host outside\n\tProxyCommand broken --setup-code-file \"{old_path}\"\n\n\
+             {MANAGED_SSH_BEGIN}\n\
+             Host device-a\n\tProxyCommand tool --proxy --setup-code-file \"{old_path}\" --target device-a\n\
+             {MANAGED_SSH_END}\n"
+        );
+        let rewritten = rewrite_setup_path_in_managed_block(&text, old_path, new_path);
+        let outside_proxy = rewritten
+            .lines()
+            .find(|line| line.contains("broken"))
+            .unwrap();
+        assert!(
+            outside_proxy.contains(old_path),
+            "outside lines must be untouched"
+        );
+        let managed = rewritten.split(MANAGED_SSH_BEGIN).nth(1).unwrap();
+        assert!(managed.contains(new_path));
+        assert!(!managed.contains(old_path));
+    }
+
+    #[test]
+    fn setup_path_rewrite_is_a_noop_without_the_old_path_or_managed_block() {
+        let old_path = r"C:\Program Files\Rust-SSH-Connect\data\connect.setup";
+        let new_path = r"C:\Users\demo\AppData\Local\rust-ssh\connect.setup";
+        assert_eq!(
+            rewrite_setup_path_in_managed_block("plain config\n", old_path, new_path),
+            "plain config\n"
+        );
+        let text = format!("{MANAGED_SSH_BEGIN}\nHost x\n{MANAGED_SSH_END}\n");
+        assert_eq!(
+            rewrite_setup_path_in_managed_block(&text, old_path, new_path),
+            text
+        );
+    }
+
+    #[test]
+    fn config_migration_copies_once_and_never_overwrites() {
+        let root = std::env::temp_dir().join(format!(
+            "rust-ssh-migration-test-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("connect.json"), "{\"old\":true}").unwrap();
+
+        let copied =
+            migrate_config_file("connect.json", std::slice::from_ref(&source), &destination);
+        assert_eq!(copied, Some(destination.join("connect.json")));
+        assert_eq!(
+            fs::read_to_string(destination.join("connect.json")).unwrap(),
+            "{\"old\":true}"
+        );
+
+        // Existing destination files are never overwritten.
+        fs::write(source.join("connect.json"), "{\"new\":true}").unwrap();
+        assert_eq!(
+            migrate_config_file("connect.json", std::slice::from_ref(&source), &destination,),
+            None
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("connect.json")).unwrap(),
+            "{\"old\":true}"
+        );
+
+        // Missing sources are skipped silently.
+        assert_eq!(
+            migrate_config_file("client.json", &[source], &destination),
+            None
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_config_files_are_created_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "rust-ssh-desktop-mode-test-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("connect.json");
+        write_private_file(&path, b"{\"secret\":true}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "config files must be created 0600");
+
+        // Replacing an existing file keeps the private mode.
+        write_private_file(&path, b"{\"secret\":false}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"secret\":false}");
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

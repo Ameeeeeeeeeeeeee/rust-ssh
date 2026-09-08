@@ -7,7 +7,7 @@ Rust-SSH 是面向个人使用的 SSH 中继工具，借鉴 RustDesk 的“设�
 - [三端部署手册（简洁版）](docs/deployment-quickstart.md)
 - [三端部署手册（详细版）](docs/deployment-detailed.md)
 
-v0.5.5 修复了加密帧被 TCP 分段传输时读取状态丢失的问题，避免 VS Code Remote-SSH 发送启动脚本后卡住或报错。请将 server、client、connect 三端都升级到 v0.5.5；配置码和密钥可以继续使用。详情见 [更新日志](CHANGELOG.md)。
+v0.5.6 增加控制通道心跳与自动恢复：控制连接失效时已建立的 SSH 会话不再受影响，Agent 自动重连后新会话恢复；同时补齐建连阶段的安全期限和秘密文件权限。三端都需要升级到 v0.5.6（可与旧版本混用，但心跳只在两端都升级后生效）。配置码和密钥可以继续使用。详情见 [更新日志](CHANGELOG.md)。
 
 ## Architecture
 

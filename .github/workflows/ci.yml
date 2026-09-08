@@ -16,3 +16,32 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo check --locked --features desktop --bins
       - run: cargo test --locked --all-targets
+
+  check-windows:
+    # Desktop tests (permissions, config migration, control recovery) run on
+    # real Windows runners; this is the Client/Connect release target.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets --all-features
+
+  check-macos:
+    # macOS runners are real Apple VMs, so the Unix permission tests and the
+    # desktop feature run here, not just cross-dependency checks.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --all-targets --all-features
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

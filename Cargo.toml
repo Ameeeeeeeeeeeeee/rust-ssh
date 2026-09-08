@@ -1,8 +1,8 @@
 [package]
 name = "rust-ssh"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 license = "MIT"
 description = "A small Noise-encrypted relay for SSH over isolated networks"
 readme = "README.md"
@@ -28,9 +28,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 unicode-segmentation = { version = "=1.12.0", optional = true }
 url = { version = "=2.5.4", optional = true }
-webbrowser = { version = "=1.0.3", optional = true }
-# Keep the first release buildable with Rust 1.82; newer zeroize releases
-# currently require the Rust 2024 Cargo feature.
+# MSRV floor: webbrowser >=1.2.2 (pulled by egui-winit, fixes
+# RUSTSEC-2026-0257) requires Rust 1.85.
+# Pin zeroize: newer releases currently require the Rust 2024 Cargo feature.
 zeroize = "=1.8.2"
 
 [target.'cfg(windows)'.dependencies]
@@ -45,6 +45,5 @@ desktop = [
     "dep:idna_adapter",
     "dep:unicode-segmentation",
     "dep:url",
-    "dep:webbrowser",
     "dep:tray-icon",
 ]

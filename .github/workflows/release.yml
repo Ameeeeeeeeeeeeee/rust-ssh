@@ -9,7 +9,16 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    # Release builds must not be produced from a tree with failing tests.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --all-targets
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -50,6 +59,7 @@ jobs:
           path: dist/*
 
   windows-installers:
+    needs: test
     strategy:
       fail-fast: false
       matrix:

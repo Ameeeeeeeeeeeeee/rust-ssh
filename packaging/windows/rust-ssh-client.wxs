@@ -9,7 +9,6 @@
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <Feature Id="MainFeature" Title="Rust-SSH-Client" Level="1">
       <ComponentRef Id="ClientExecutable" />
-      <ComponentRef Id="ClientData" />
       <ComponentRef Id="ClientShortcut" />
     </Feature>
   </Package>
@@ -20,21 +19,13 @@
     </InstallExecuteSequence>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Client">
-        <Directory Id="DataFolder" Name="data" />
-      </Directory>
+      <Directory Id="INSTALLFOLDER" Name="Rust-SSH-Client" />
     </StandardDirectory>
 
     <Component Id="ClientExecutable" Directory="INSTALLFOLDER" Guid="e37de214-42e3-4fed-b54d-8407aae6f591">
       <File Id="ClientExe" Source="$(var.BinaryPath)" KeyPath="yes" />
       <RemoveFile Id="RemoveClientExecutable" Name="rust-ssh-client.exe" On="uninstall" />
       <RemoveFolder Id="RemoveClientInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
-    </Component>
-
-    <Component Id="ClientData" Directory="DataFolder" Guid="d7f7f8a7-5d5f-4b6f-87fd-3c4d12dcd801">
-      <CreateFolder>
-        <util:PermissionEx User="Users" GenericAll="yes" />
-      </CreateFolder>
     </Component>
 
     <StandardDirectory Id="ProgramMenuFolder">

@@ -11,7 +11,8 @@ Windows Rust-SSH-Client ──主动连接──> Ubuntu 服务器 rust-ssh-serv
 - Release 下载文件可以直接运行，不需要安装 Rust。
 - 支持同一 client 多个 SSH 终端的版本需要三端一起升级；不要混用旧版 server、client 和 connect。
 - v0.5.4 的 Client 和 Connect GUI 会显示当前版本；SSH 免密配置由你按 OpenSSH 规则自行管理，GUI 不会修改密钥设置。
-- v0.5.5 修复了分段传输加密帧导致 VS Code Remote-SSH 卡住或连接失败的问题；请将三端都升级到 v0.5.5，已有配置码和密钥可继续使用。
+- v0.5.5 修复了分段传输加密帧导致 VS Code Remote-SSH 卡住或连接失败的问题，已有配置码和密钥可继续使用。
+- v0.5.6 增加控制通道心跳：控制通道失效后 Client 自动重连，已建立的 SSH 会话不受影响；可与旧版本混用，但心跳恢复需要三端都升级到 v0.5.6。Windows 配置目录迁移到 `%LOCALAPPDATA%\rust-ssh`，升级后首次启动自动迁移旧配置。
 - 示例中的 IP、用户名和设备 ID 都是虚构值，请替换成自己的值。
 
 ## 1. 先部署服务器
@@ -91,7 +92,7 @@ sudo systemctl status rust-ssh-server --no-pager
 Rust-SSH-Client-windows-x86_64.msi
 ```
 
-MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client`，也可以在向导中修改路径；它会创建开始菜单入口。Release 不提供单独的 Windows `.exe`。双击开始菜单里的 Rust-SSH-Client 即可。配置会保存在安装目录下的 `data` 文件夹中。为保证普通用户可写，`data` 对本机 Users 组开放；多人共用电脑时请保护好配置码。
+MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client`，也可以在向导中修改路径；它会创建开始菜单入口。Release 不提供单独的 Windows `.exe`。双击开始菜单里的 Rust-SSH-Client 即可。v0.5.6 起配置保存在当前用户的 `%LOCALAPPDATA%\rust-ssh` 文件夹中（不再放在安装目录）；升级后首次启动会自动迁移旧配置。
 
 第一次打开 client 时，界面会显示一串类似下面的设备 ID：
 
@@ -99,7 +100,7 @@ MSI 需要管理员权限，会默认安装到 `C:\Program Files\Rust-SSH-Client
 rssh-0123456789abcdef0123456789abcdef
 ```
 
-点击“复制”，把这串 ID 发给服务器管理员。它是随机生成并保存在本机的，不使用 Windows 计算机名；修改计算机名不会影响连接。Rust-SSH-Client 配置保存在 `<client安装目录>\data\client.json`。
+点击“复制”，把这串 ID 发给服务器管理员。它是随机生成并保存在本机的，不使用 Windows 计算机名；修改计算机名不会影响连接。Rust-SSH-Client 配置保存在 `%LOCALAPPDATA%\rust-ssh\client.json`。
 
 确认 Windows 自带 OpenSSH Server 正常：
 
@@ -166,7 +167,7 @@ macOS 首次运行前执行：
 chmod +x Rust-SSH-Connect-macos-aarch64
 ```
 
-Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。配置和配置码会保存在安装目录下的 `data` 文件夹中。Connect 也会常驻右下角托盘；关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。
+Windows 双击 MSI，按向导选择安装目录，然后从开始菜单打开 Rust-SSH-Connect。v0.5.6 起配置和配置码保存在当前用户的 `%LOCALAPPDATA%\rust-ssh` 文件夹中（不再放在安装目录），升级后首次启动会自动迁移旧配置并改写已有的 SSH ProxyCommand 路径。Connect 也会常驻右下角托盘；关闭窗口只隐藏，托盘菜单中的“关闭”才会退出。
 
 打开 connect，粘贴主控配置码，填写 Windows 的 OpenSSH 用户名，例如 `windows-user`。Connect 只负责 Rust-SSH 中继和生成 Host 配置，不配置 SSH 免密；如果需要免密，请自行维护 OpenSSH 的 `authorized_keys`、`IdentityFile` 或 `ssh-agent`。`known_hosts` 只保存服务器指纹，不是登录公钥。
 
