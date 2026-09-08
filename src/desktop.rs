@@ -1393,7 +1393,9 @@ fn migrate_legacy_config(_name: &str) {}
 
 /// Copy `name` from the first source directory that has it into
 /// `destination_dir`, without overwriting an existing destination file.
-/// Returns the destination path when a copy happened.
+/// Returns the destination path when a copy happened. On non-Windows builds
+/// this only exists for the unit tests.
+#[cfg(any(windows, test))]
 fn migrate_config_file(name: &str, sources: &[PathBuf], destination_dir: &Path) -> Option<PathBuf> {
     for source_directory in sources {
         if source_directory == destination_dir {
@@ -1475,7 +1477,9 @@ fn rewrite_setup_path_in_ssh_config(old_path: &str, new_path: &str) -> Result<()
 }
 
 /// Replace an old setup-code path with the new one inside the managed rust-ssh
-/// block only; user-written config outside the block is never touched.
+/// block only; user-written config outside the block is never touched. On
+/// non-Windows builds this only exists for the unit tests.
+#[cfg(any(windows, test))]
 fn rewrite_setup_path_in_managed_block(text: &str, old_path: &str, new_path: &str) -> String {
     let Some(begin) = text.find(MANAGED_SSH_BEGIN) else {
         return text.to_owned();
